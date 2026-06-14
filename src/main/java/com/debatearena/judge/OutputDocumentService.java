@@ -66,6 +66,7 @@ public class OutputDocumentService {
             String userPrompt = buildDebateContext(session);
             String raw = judgeService.generateDocumentContent(session, systemPrompt, userPrompt);
             String content = DocumentContentSanitizer.sanitize(raw);
+            content = enforceStatusConsistency(content, session);
             log.info("📄 产出文档已生成 — session={}, type={}, len={}",
                     session.getSessionId(), type.getId(), content.length());
             return OutputDocumentRecord.success(type.getId(), type.getLabel(), content);
@@ -98,9 +99,17 @@ public class OutputDocumentService {
         StringBuilder sb = new StringBuilder();
         sb.append("=== 需求描述 ===\n").append(session.getTopic()).append("\n\n");
         sb.append("=== 研讨元信息 ===\n");
-        sb.append("状态: ").append(session.getStatus()).append("\n");
+        sb.append("status（枚举，文档信息区须与此一致）: ").append(session.getStatus()).append("\n");
+        sb.append("最终状态中文（文档信息区必须照抄此行）: ")
+                .append(formatFinalStatusLabel(session)).append("\n");
+        sb.append("是否已收敛: ").append(session.getStatus() == DebateStatus.CONVERGED ? "是" : "否")
+                .append("\n");
         sb.append("总轮数: ").append(session.getCurrentRoundNumber()).append("\n");
         sb.append("收敛阈值: ").append(session.getConvergenceThreshold()).append("\n");
+        appendLastConvergenceMetrics(sb, session);
+        if (session.getStatus() != DebateStatus.CONVERGED) {
+            sb.append("【重要】本场研讨未收敛，禁止写「已收敛」「最终状态已收敛」等表述。\n");
+        }
         sb.append("参与讨论方: ");
         session.getParticipatingPlatforms().forEach(p ->
                 sb.append(session.getParticipantAlias(p)).append(" "));
@@ -164,6 +173,53 @@ public class OutputDocumentService {
     private void stateStoreSaveProgress(DebateSession session, Map<String, OutputDocumentRecord> documents) {
         session.setGeneratedDocuments(new LinkedHashMap<>(documents));
         stateStore.saveSnapshot(session.getSessionId(), session.getCurrentRoundNumber(), session);
+    }
+
+    /**
+     * 将文档中错误的「已收敛」表述修正为与会话真实状态一致。
+     */
+    private String enforceStatusConsistency(String content, DebateSession session) {
+        if (content == null || content.isBlank() || session.getStatus() == null) {
+            return content;
+        }
+        if (session.getStatus() == DebateStatus.CONVERGED) {
+            return content;
+        }
+        String correct = formatFinalStatusLabel(session);
+        String fixed = content;
+        fixed = fixed.replaceAll("(?m)(最终状态[：:]\\s*)已收敛", "$1" + correct);
+        fixed = fixed.replaceAll("(?m)(研讨状态[：:]\\s*)已收敛", "$1" + correct);
+        fixed = fixed.replace("最终状态已收敛", correct);
+        return fixed;
+    }
+
+    /**
+     * 将会话状态映射为文档信息区应使用的中文标签。
+     */
+    private String formatFinalStatusLabel(DebateSession session) {
+        return switch (session.getStatus()) {
+            case CONVERGED -> "已收敛";
+            case MAX_ROUNDS -> "已达轮次上限（未收敛）";
+            case FAILED -> "研讨失败";
+            default -> session.getStatus().name();
+        };
+    }
+
+    /**
+     * 附加最后一轮收敛检测指标，供文档准确描述未收敛程度。
+     */
+    private void appendLastConvergenceMetrics(StringBuilder sb, DebateSession session) {
+        if (session.getRounds() == null || session.getRounds().isEmpty()) {
+            return;
+        }
+        DebateRound last = session.getRounds().get(session.getRounds().size() - 1);
+        ConvergenceResult c = last.getConvergenceResult();
+        if (c == null) {
+            return;
+        }
+        sb.append("末轮收敛检测: minPairwise=")
+                .append(String.format("%.4f", c.getMinPairwiseSimilarity()))
+                .append(", converged=").append(c.isConverged()).append("\n");
     }
 
     private String truncate(String text, int maxLen) {

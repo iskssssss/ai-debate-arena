@@ -1,5 +1,6 @@
 package com.debatearena.prompts;
 
+import com.debatearena.adapter.ResponseContentValidator;
 import com.debatearena.model.AiPlatform;
 import com.debatearena.model.DebateRound;
 import com.debatearena.model.DebateSession;
@@ -44,10 +45,13 @@ public class DebatePromptBuilder {
      * 构建第 1 轮初始回答 Prompt。
      */
     public String buildInitialPrompt(DebateSession session, AiPlatform self) {
-        return templateService.renderInitialPrompt(
-                session.getTopic(),
-                session.getParticipantAlias(self),
-                session.getParticipatingPlatforms().size());
+        String alias = session.getParticipantAlias(self);
+        int count = session.getParticipatingPlatforms().size();
+        String topic = session.getTopic();
+        if (ResponseContentValidator.isCompactTopic(topic)) {
+            return templateService.renderCompactInitialPrompt(topic, alias, count);
+        }
+        return templateService.renderInitialPrompt(topic, alias, count);
     }
 
     /**
@@ -184,4 +188,4 @@ public class DebatePromptBuilder {
         return sb.toString().trim();
     }
 }
-
+

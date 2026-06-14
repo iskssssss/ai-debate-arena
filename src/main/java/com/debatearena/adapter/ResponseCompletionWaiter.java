@@ -26,9 +26,11 @@ import java.util.function.Supplier;
 public class ResponseCompletionWaiter {
 
     private static final int STABLE_POLL_MS = 500;
-    private static final int MAX_STABLE_POLLS = 6;
+    private static final int MAX_STABLE_POLLS = 12;
     private static final int INDICATOR_WAIT_MS = 8000;
     private static final int MIN_EARLY_EXTRACT_LEN = 50;
+    /** 文本稳定性检测要求的最小稳定次数。 */
+    private static final int REQUIRED_STABLE_COUNT = 2;
 
     private final FallbackSelector fallback;
 
@@ -103,22 +105,23 @@ public class ResponseCompletionWaiter {
     }
 
     /**
-     * 有限次文本稳定性检测：连续 2 次相同且非空则完成。
+     * 有限次文本稳定性检测：连续稳定且长度不再增长则完成。
      */
     private void waitForTextStable(Supplier<String> latestTextSupplier, String platformName) {
         log.debug("{} 文本稳定性检测…", platformName);
         String lastContent = "";
         int stableCount = 0;
 
-        for (int i = 0; i < MAX_STABLE_POLLS && stableCount < 2; i++) {
+        for (int i = 0; i < MAX_STABLE_POLLS && stableCount < REQUIRED_STABLE_COUNT; i++) {
             sleepQuietly(STABLE_POLL_MS);
             String current = latestTextSupplier.get();
-            if (current != null && !current.isBlank() && current.equals(lastContent)) {
+            String safeCurrent = current != null ? current : "";
+            if (!safeCurrent.isBlank() && safeCurrent.equals(lastContent)) {
                 stableCount++;
             } else {
                 stableCount = 0;
             }
-            lastContent = current != null ? current : "";
+            lastContent = safeCurrent;
         }
         log.debug("{} 文本稳定性检测完成 (stableCount={}, lastLen={})",
                 platformName, stableCount, lastContent.length());

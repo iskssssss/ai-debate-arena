@@ -8,25 +8,43 @@ selectors:
   # 输入框（Quill.js 富文本编辑器）
   input: "div.ql-editor[contenteditable='true']"
   input-fallback: "div[contenteditable='true']"
-  # 发送按钮
-  submit: "button[aria-label='Send message']"
-  submit-fallback: "button[aria-label='发送消息']"
-  # 响应区域
-  response-container: "div.response-content"
-  latest-response: "message-content:last-of-type div.response-content"
+  # 发送按钮（中文界面 aria-label=发送，图标 arrow_upward）
+  submit: "button.mat-mdc-icon-button[aria-label='发送']"
+  submit-fallback: "button[aria-label='发送']"
+  submit-fallback-2: "button.mat-mdc-icon-button:has(mat-icon[data-mat-icon-name='arrow_upward'])"
+  submit-fallback-3: "button[aria-label='Send message']"
+  submit-fallback-4: "button[aria-label='发送消息']"
+  # 响应正文（message-content 内 markdown 不含 screen-reader「Gemini 说」前缀）
+  response-container: "model-response message-content div.markdown"
+  latest-response: "model-response message-content div.markdown"
+  latest-response-fallback: "message-content div.markdown"
+  latest-response-fallback-2: "div.response-content"
   # 已登录标识（侧边栏存在即表示已登录）
   login-indicator: "div[data-test-id='side-nav']"
   login-indicator-fallback: "nav[aria-label='Side panel']"
-  # 响应完成标识（复制按钮出现 = 生成完毕）
-  response-wait-indicator: "button[aria-label='Copy']"
+  # 响应完成标识（回答区 footer 的 copy-button，非用户提示的「复制提示」）
+  response-wait-indicator: "copy-button[data-test-id='copy-button'] button[aria-label='复制']"
+  # 复制回答按钮（限定在最后一条 model-response 的 message-actions 页脚）
+  copy-response: "model-response:last-of-type copy-button[data-test-id='copy-button'] button[aria-label='复制']"
+  copy-response-fallback: "model-response:last-of-type message-actions button[aria-label='复制']"
+  copy-response-fallback-2: "copy-button[data-test-id='copy-button'] button[aria-label='复制']"
+  copy-response-fallback-3: "model-response:last-of-type button.mat-mdc-icon-button[aria-label='复制']"
+  copy-response-fallback-4: "button.mat-mdc-icon-button[aria-label='复制']:not([data-test-id='prompt-copy-button'] *)"
   # 停止生成按钮（若此按钮消失 = 生成完毕）
   stop-generating: "button[aria-label='Stop']"
+  stop-generating-fallback: "button[aria-label='停止']"
   # 新建对话按钮
   new-chat: "button[aria-label='New chat']"
   new-chat-fallback: "button[aria-label='开始新对话']"
+  # 启动弹窗 / discovery 引导（cdk-overlay-container 内）
+  overlay-dismiss: "div.cdk-overlay-container button[aria-label='Close']"
+  overlay-dismiss-fallback: "div.discovery-card button[aria-label='Close']"
+  overlay-dismiss-fallback-2: "div.discovery-card button"
+  overlay-dismiss-fallback-3: "div.cdk-overlay-container .cdk-overlay-backdrop"
+  overlay-dismiss-fallback-4: "button[aria-label='Dismiss']"
   # 等待超时配置
   timeouts:
     page-load: 15000
     input-ready: 10000
     response-complete: 120000
-    indicator-wait: 8000
+    indicator-wait: 12000

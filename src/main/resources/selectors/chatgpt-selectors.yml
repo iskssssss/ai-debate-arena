@@ -11,17 +11,20 @@ selectors:
   # 发送按钮
   submit: "button[data-testid='send-button']"
   submit-fallback: "button[aria-label='Send prompt']"
-  # 响应区域
+  # 响应区域（取最后一条 assistant，由代码 .last() / nth(count-1) 定位，避免 :last-of-type 误匹配）
   response-container: "div[data-message-author-role='assistant']"
-  latest-response: "article[data-testid^='conversation-turn-']:last-of-type div[data-message-author-role='assistant']"
+  latest-response: "div[data-message-author-role='assistant']"
+  latest-response-fallback: "article[data-testid^='conversation-turn-'] div[data-message-author-role='assistant']"
   # 已登录标识
   login-indicator: "button[data-testid='profile-button']"
   login-indicator-fallback: "nav[aria-label='ChatGPT']"
-  # 响应完成标识（最后一条回复的复制按钮出现 = 生成完毕）
-  response-wait-indicator: "article[data-testid^='conversation-turn-']:last-of-type button[data-testid='copy-turn-action-button']"
-  # 复制回答按钮（用于剪贴板提取，限定最后一条回复）
-  copy-response: "article[data-testid^='conversation-turn-']:last-of-type button[data-testid='copy-turn-action-button']"
-  copy-response-fallback: "article[data-testid^='conversation-turn-']:last-of-type div[data-message-author-role='assistant'] button[data-testid='copy-turn-action-button']"
+  # 响应完成标识（复制按钮出现 = 生成完毕；取页面上最后一个复制按钮）
+  response-wait-indicator: "button[data-testid='copy-turn-action-button']"
+  # 复制回答按钮（用于剪贴板提取；优先在最后一轮 assistant 消息容器内查找）
+  copy-response: "div[data-message-author-role='assistant'] button[data-testid='copy-turn-action-button']"
+  copy-response-fallback: "button[data-testid='copy-turn-action-button']"
+  copy-response-fallback-2: "article[data-testid^='conversation-turn-'] button[data-testid='copy-turn-action-button']"
+  copy-response-fallback-3: "[data-testid='conversation-turn'] button[data-testid='copy-turn-action-button']"
   # 停止生成按钮
   stop-generating: "button[data-testid='stop-button']"
   stop-generating-fallback: "button[aria-label='Stop generating']"

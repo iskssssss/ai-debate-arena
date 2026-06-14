@@ -11,8 +11,12 @@ import {
     openBubbleModal, closeBubbleModal, bindBubbleModalEvents
 } from './debate-detail.js';
 import {
-    updateDocumentDescription, previewSelectedDocument, downloadSelectedDocument, scrollToHeading
+    updateDocumentDescription, previewSelectedDocument, downloadSelectedDocument, scrollToHeading,
+    onDocumentSelectChange
 } from './documents.js';
+import {
+    saveLayoutFromControls, resetDocumentLayout
+} from './document-layout.js';
 import { loadHistory } from './history.js';
 import { loadPageState, initPageStatePersistence, restoreScrollPosition } from './page-state.js';
 
@@ -41,9 +45,12 @@ function bindGlobals() {
         openBubbleModal,
         closeBubbleModal,
         updateDocumentDescription,
+        onDocumentSelectChange,
         previewSelectedDocument,
         downloadSelectedDocument,
-        scrollToHeading
+        scrollToHeading,
+        saveLayoutFromControls,
+        resetDocumentLayout
     });
 }
 

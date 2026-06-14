@@ -9,10 +9,30 @@ public final class ResponseContentValidator {
 
     /** 初始方案轮最低有效字数。 */
     private static final int MIN_INITIAL_LENGTH = 400;
+    /** 极简需求初始方案最低有效字数。 */
+    private static final int MIN_COMPACT_INITIAL_LENGTH = 120;
     /** 审阅/修订/收敛轮最低有效字数。 */
     private static final int MIN_OTHER_ROUND_LENGTH = 150;
 
     private ResponseContentValidator() {
+    }
+
+    /**
+     * 去除平台 UI 提取时混入的前缀（如「Gemini 说」）。
+     *
+     * @param content 原始提取文本
+     * @return 清洗后的文本
+     */
+    public static String sanitizePlatformUiArtifacts(String content) {
+        if (content == null || content.isBlank()) {
+            return content == null ? "" : content;
+        }
+        String result = content.strip();
+        result = result.replaceFirst(
+                "(?is)^(?:Gemini|ChatGPT|DeepSeek|Bard)\\s*(?:说|said)[:：\\s]*\\n?", "");
+        result = result.replaceFirst("(?m)^你说\\s*$", "");
+        result = result.replaceFirst("(?m)^(?:复制|Copy|下载|Download)\\s*$", "");
+        return result.strip();
     }
 
     /**
@@ -29,18 +49,64 @@ public final class ResponseContentValidator {
             return false;
         }
         String normalized = normalize(content);
-        int minLen = roundType == RoundType.INITIAL ? MIN_INITIAL_LENGTH : MIN_OTHER_ROUND_LENGTH;
+        int minLen = roundType == RoundType.INITIAL
+                ? (isCompactTopic(topic) ? MIN_COMPACT_INITIAL_LENGTH : MIN_INITIAL_LENGTH)
+                : MIN_OTHER_ROUND_LENGTH;
         if (normalized.length() < minLen) {
             return false;
         }
         if (isEchoOf(normalized, prompt) || isEchoOf(normalized, topic)) {
             return false;
         }
-        // 初始方案须包含结构化章节痕迹，避免只复述需求标题
-        if (roundType == RoundType.INITIAL && !hasInitialStructure(normalized)) {
-            return false;
+        // 初始方案须包含结构化章节痕迹，避免只复述需求标题或中途截断
+        if (roundType == RoundType.INITIAL) {
+            if (!hasInitialStructure(normalized)) {
+                return false;
+            }
+            if (!isCompactTopic(topic) && looksTruncated(normalized)) {
+                return false;
+            }
         }
         return true;
+    }
+
+    /**
+     * 判断需求是否属于极简场景（与 DebatePromptBuilder 使用相同启发式）。
+     */
+    public static boolean isCompactTopic(String topic) {
+        if (topic == null) {
+            return false;
+        }
+        String trimmed = topic.trim();
+        if (trimmed.isEmpty() || trimmed.length() > 40) {
+            return false;
+        }
+        if (trimmed.matches("^[\\d+\\-*/().=\\s]+$")) {
+            return true;
+        }
+        return trimmed.length() <= 20
+                && !trimmed.matches(".*(系统|服务|平台|架构|模块|接口|数据库|微服务|部署|API).*");
+    }
+
+    /**
+     * 判断初始方案是否疑似流式输出未完成即被截断。
+     */
+    public static boolean looksTruncated(String content) {
+        if (content == null || content.isBlank()) {
+            return false;
+        }
+        String tail = content.substring(Math.max(0, content.length() - 40)).trim();
+        if (tail.endsWith("（") || tail.endsWith("：") || tail.endsWith("，")
+                || tail.endsWith("、") || tail.endsWith("之间") || tail.endsWith("请求")) {
+            return true;
+        }
+        boolean hasMidSections = content.contains("接口") || content.contains("技术选型")
+                || content.contains("模块划分") || content.matches("(?s).*##\\s*5\\..*");
+        boolean hasTailSections = content.contains("实施计划") || content.contains("风险与缓解")
+                || content.contains("关键流程") || content.contains("验收方式")
+                || content.contains("风险与注意点")
+                || content.matches("(?s).*##\\s*[6789]\\..*");
+        return hasMidSections && !hasTailSections && content.length() < 2200;
     }
 
     /**
@@ -111,6 +177,8 @@ public final class ResponseContentValidator {
     private static boolean hasInitialStructure(String content) {
         return content.contains("需求理解")
                 || content.contains("实现方案")
+                || content.contains("推荐实现")
+                || content.contains("验收方式")
                 || content.contains("模块划分")
                 || content.contains("技术选型")
                 || content.matches("(?s).*##\\s*\\d+\\..*");

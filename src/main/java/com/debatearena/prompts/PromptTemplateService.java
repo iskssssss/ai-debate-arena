@@ -44,6 +44,17 @@ public class PromptTemplateService {
     }
 
     /**
+     * 渲染极简需求的紧凑初始方案 Prompt。
+     */
+    public String renderCompactInitialPrompt(String topic, String yourAlias, int participantCount) {
+        return render("classpath:templates/debate/initial-prompt-compact.st", Map.of(
+                "topic", topic,
+                "your_alias", yourAlias,
+                "participant_count", String.valueOf(participantCount)
+        ));
+    }
+
+    /**
      * 渲染批判 Prompt —— 根据实际参与的其他讨论方动态生成。
      */
     public String renderCritiquePrompt(String topic, String yourAlias, int participantCount,

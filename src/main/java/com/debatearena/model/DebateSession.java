@@ -88,8 +88,12 @@ public class DebateSession {
     @Builder.Default
     private Map<AiPlatform, String> participantAliases = new EnumMap<>(AiPlatform.class);
 
-    /** 研讨失败时的可读原因（供前端展示）。 */
+    /** 研讨失败时的可读原因（仅整场 FAILED 时展示）。 */
     private String failureReason;
+
+    /** 单方失败记录（降级续跑时保留，供前端警告展示）。 */
+    @Builder.Default
+    private Map<AiPlatform, String> platformFailures = new LinkedHashMap<>();
 
     /** 失败发生的轮次编号（0 表示准备阶段）。 */
     @Builder.Default
@@ -167,7 +171,7 @@ public class DebateSession {
     }
 
     /**
-     * 记录平台失败并生成用户可读原因。
+     * 记录平台失败；降级续跑时写入 platformFailures，不覆盖整场 failureReason。
      *
      * @param platform 失败平台
      * @param roundNum 失败轮次（0 为准备阶段）
@@ -179,7 +183,40 @@ public class DebateSession {
         String alias = getParticipantAlias(platform);
         String phase = roundNum > 0 ? "第 " + roundNum + " 轮" : "准备阶段";
         String simplified = simplifyFailureReason(reason);
-        failureReason = alias + " 在" + phase + "失败：" + simplified;
+        platformFailures.put(platform, alias + " 在" + phase + "未能参与：" + simplified);
+    }
+
+    /**
+     * 标记整场研讨失败并设置终止原因（活跃平台不足等）。
+     */
+    public void markTerminalFailure(String reason) {
+        failureReason = reason;
+        updatedAt = LocalDateTime.now();
+    }
+
+    /**
+     * 获取单方失败的摘要列表（供前端警告展示）。
+     */
+    public List<String> getPlatformFailureSummaries() {
+        return new ArrayList<>(platformFailures.values());
+    }
+
+    /**
+     * 是否存在单方失败但研讨仍继续的情况。
+     */
+    public boolean hasPartialFailures() {
+        return !platformFailures.isEmpty();
+    }
+
+    /**
+     * 构建整场终止时的可读原因（活跃平台不足等）。
+     */
+    public String buildTerminalFailureDetail() {
+        if (!platformFailures.isEmpty()) {
+            return String.join("；", platformFailures.values())
+                    + "（活跃平台不足，至少需要 2 个）";
+        }
+        return "活跃平台不足（当前 " + getActivePlatformCount() + "，至少需要 2 个）";
     }
 
     /**
@@ -198,8 +235,8 @@ public class DebateSession {
         if (reason.contains("未初始化")) {
             return "浏览器通道未就绪";
         }
-        if (reason.contains("超时")) {
-            return "响应超时";
+        if (reason.contains("Timeout") || reason.contains("超时")) {
+            return "页面操作超时（可能被弹窗遮挡或网络较慢）";
         }
         if (reason.length() > 120) {
             return reason.substring(0, 117) + "…";

@@ -66,4 +66,12 @@ public interface SelectorProvider {
 
     /** 获取复制回答按钮选择器的 fallback 链。 */
     List<String> getCopyResponseSelectorChain();
+
+    /**
+     * 获取启动遮罩/引导弹窗的关闭按钮选择器链（Gemini discovery-card 等）。
+     * 默认空列表，仅部分平台 YAML 配置。
+     */
+    default List<String> getOverlayDismissSelectorChain() {
+        return List.of();
+    }
 }

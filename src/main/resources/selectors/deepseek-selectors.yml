@@ -19,9 +19,11 @@ selectors:
   latest-response-fallback: "div[class*='Message']:last-of-type"
   # 响应完成标识（最后一条 Markdown 出现且稳定）
   response-wait-indicator: "div.ds-markdown"
-  # 复制回答按钮（限定最后一条回复区域）
+  # 复制回答按钮（限定最后一条 ds-markdown 消息旁的操作按钮）
   copy-response: "div.ds-markdown:last-of-type ~ div div[role='button'].ds-button--icon"
-  copy-response-fallback: "div.ds-markdown:last-of-type ~ div div[role='button'].ds-button--icon, div.ds-markdown:last-of-type + div div[role='button'].ds-button--icon"
+  copy-response-fallback: "div.ds-markdown + div div[role='button'].ds-button--icon"
+  copy-response-fallback-2: "div[role='button'].ds-button--icon[aria-label*='复制']"
+  copy-response-fallback-3: "div[role='button'].ds-button--icon"
   # 已登录标识
   login-indicator: "textarea[placeholder*='发送消息']"
   login-indicator-fallback: "div[class*='Sidebar']"

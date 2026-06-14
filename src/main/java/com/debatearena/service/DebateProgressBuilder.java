@@ -71,6 +71,19 @@ public class DebateProgressBuilder {
         if (isPostProcessing(session)) {
             return "整理中";
         }
+        if (session.hasPartialFailures()
+                && (session.getStatus() == DebateStatus.CONVERGED
+                || session.getStatus() == DebateStatus.MAX_ROUNDS)) {
+            return switch (session.getStatus()) {
+                case CONVERGED -> "已完成（部分缺席）";
+                case MAX_ROUNDS -> "已达上限（部分缺席）";
+                default -> buildStatusLabelBase(session);
+            };
+        }
+        return buildStatusLabelBase(session);
+    }
+
+    private String buildStatusLabelBase(DebateSession session) {
         return switch (session.getStatus()) {
             case CONVERGED -> "已完成";
             case MAX_ROUNDS -> "已达上限";

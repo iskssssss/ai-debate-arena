@@ -245,6 +245,11 @@ function renderOverviewPanel(status, judge) {
     }
     if (status.failureReason && status.status === 'FAILED') {
         html += `<div class="callout callout-error overview-error">${escapeHtml(status.failureReason)}</div>`;
+    } else if (status.platformFailures?.length) {
+        const warnings = status.platformFailures.map(f => escapeHtml(f)).join('<br>');
+        html += `<div class="callout callout-warning overview-error">
+            <strong>部分讨论方未能参与</strong>（研讨已降级继续）<br>${warnings}
+        </div>`;
     }
     html += '</div>';
     return html;

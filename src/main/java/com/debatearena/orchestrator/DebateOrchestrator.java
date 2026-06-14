@@ -186,13 +186,13 @@ public class DebateOrchestrator {
             log.error("💥 辩论失败 — session={}: {}", sessionId, e.getMessage());
             session.setStatus(DebateStatus.FAILED);
             if (session.getFailureReason() == null || session.getFailureReason().isBlank()) {
-                session.setFailureReason(e.getMessage());
+                session.markTerminalFailure(e.getMessage());
             }
             stateStore.saveSnapshot(sessionId, session.getCurrentRoundNumber(), session);
         } catch (Exception e) {
             log.error("💥 辩论异常 — session={}: {}", sessionId, e.getMessage(), e);
             session.setStatus(DebateStatus.FAILED);
-            session.setFailureReason(e.getMessage() != null ? e.getMessage() : "未知异常");
+            session.markTerminalFailure(e.getMessage() != null ? e.getMessage() : "未知异常");
         } finally {
             cleanupAdapters();
             // 已收敛/达上限的会话由异步赛后任务清理
@@ -336,7 +336,7 @@ public class DebateOrchestrator {
                     String topic = ResponseContentValidator.extractTopicFromPrompt(prompt);
                     if (!ResponseContentValidator.isValid(response, prompt, topic, type)) {
                         throw new BrowserAutomationException(
-                                "回复无效：疑似误抓用户消息或内容过短（" + response.length() + " 字符）");
+                                "回复无效：疑似误抓用户消息、内容过短或结构不完整（" + response.length() + " 字符）");
                     }
                     round.addResponse(platform,
                             ParticipantResponse.of(platform, response, 0));
@@ -351,8 +351,8 @@ public class DebateOrchestrator {
         // 优雅降级检查
         if (session.getActivePlatformCount() < 2) {
             session.setFailedAtRound(roundNum);
-            String detail = session.getFailureReason() != null ? session.getFailureReason()
-                    : "活跃平台不足（当前 " + session.getActivePlatformCount() + "，至少需要 2 个）";
+            String detail = session.buildTerminalFailureDetail();
+            session.markTerminalFailure(detail);
             throw new DebateFailedException(detail);
         }
 
@@ -724,8 +724,8 @@ public class DebateOrchestrator {
 
         if (session.getActivePlatformCount() < 2) {
             session.setFailedAtRound(0);
-            String detail = session.getFailureReason() != null ? session.getFailureReason()
-                    : "初始化后活跃平台不足（" + session.getActivePlatformCount() + "）";
+            String detail = session.buildTerminalFailureDetail();
+            session.markTerminalFailure(detail);
             throw new DebateFailedException(detail);
         }
     }

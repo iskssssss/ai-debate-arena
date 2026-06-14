@@ -167,6 +167,7 @@ public class DebateController {
                 .judgeEnabled(session.isJudgeEnabled())
                 .postProcessing(progressBuilder.isPostProcessing(session))
                 .failureReason(session.getFailureReason())
+                .platformFailures(session.getPlatformFailureSummaries())
                 .steps(progressBuilder.buildSteps(session))
                 .createdAt(session.getCreatedAt())
                 .updatedAt(session.getUpdatedAt())

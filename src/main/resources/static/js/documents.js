@@ -1,6 +1,9 @@
 import { API, DOC_STATUS_LABELS } from './config.js';
 import { state } from './state.js';
 import { toast, escapeHtml } from './utils.js';
+import {
+    applyDocumentLayout, renderDocumentLayoutPanel, syncLayoutControls
+} from './document-layout.js';
 
 /** 渲染产出文档区块 HTML。 */
 export function renderDocumentSection(documents) {
@@ -12,11 +15,12 @@ export function renderDocumentSection(documents) {
         return `<option value="${escapeHtml(d.type)}">${escapeHtml(d.title)}（${status}）</option>`;
     }).join('');
     return `<div class="doc-toolbar">
-            <select id="document-select" onchange="updateDocumentDescription()">${options}</select>
+            <select id="document-select" onchange="onDocumentSelectChange()">${options}</select>
             <button class="btn btn-outline btn-sm" onclick="previewSelectedDocument()">预览</button>
             <button class="btn btn-primary btn-sm" onclick="downloadSelectedDocument()">下载</button>
         </div>
         <p id="document-desc" class="hint" style="margin-top:8px;"></p>
+        ${renderDocumentLayoutPanel()}
         <div class="doc-preview-layout">
             <div class="doc-preview-main">
                 <div id="document-preview" class="report-box">选择文档后点击预览</div>
@@ -28,13 +32,22 @@ export function renderDocumentSection(documents) {
         </div>`;
 }
 
-/** 根据当前选中的产出文档更新用途说明。 */
+/** 根据当前选中的产出文档更新用途说明与排版配置。 */
 export function updateDocumentDescription() {
     const type = document.getElementById('document-select')?.value;
     const el = document.getElementById('document-desc');
     if (!el) return;
     const item = state.currentDocumentList.find(d => d.type === type);
     el.textContent = item?.description || '';
+    if (type) {
+        syncLayoutControls(type);
+        applyDocumentLayout(type);
+    }
+}
+
+/** 切换产出文档时同步说明与排版。 */
+export function onDocumentSelectChange() {
+    updateDocumentDescription();
 }
 
 /**
@@ -174,6 +187,7 @@ export async function previewSelectedDocument() {
             return;
         }
         setPreviewMarkdown(el, text);
+        applyDocumentLayout(type);
     } catch (e) {
         setPreviewMessage(el, '加载失败：' + e.message);
     }

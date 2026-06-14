@@ -165,6 +165,9 @@ public class YamlSelectorProvider implements SelectorProvider {
         List<String> chain = new ArrayList<>();
         addIfNotNull(chain, getSubmitSelector());
         addIfNotNull(chain, getSubmitFallbackSelector());
+        addIfNotNull(chain, getString("submit-fallback-2"));
+        addIfNotNull(chain, getString("submit-fallback-3"));
+        addIfNotNull(chain, getString("submit-fallback-4"));
         return chain;
     }
 
@@ -173,7 +176,20 @@ public class YamlSelectorProvider implements SelectorProvider {
         List<String> chain = new ArrayList<>();
         addIfNotNull(chain, getCopyResponseSelector());
         addIfNotNull(chain, getCopyResponseFallbackSelector());
-        addIfNotNull(chain, getResponseWaitIndicator());
+        addIfNotNull(chain, getString("copy-response-fallback-2"));
+        addIfNotNull(chain, getString("copy-response-fallback-3"));
+        addIfNotNull(chain, getString("copy-response-fallback-4"));
+        return chain;
+    }
+
+    @Override
+    public List<String> getOverlayDismissSelectorChain() {
+        List<String> chain = new ArrayList<>();
+        addIfNotNull(chain, getString("overlay-dismiss"));
+        addIfNotNull(chain, getString("overlay-dismiss-fallback"));
+        addIfNotNull(chain, getString("overlay-dismiss-fallback-2"));
+        addIfNotNull(chain, getString("overlay-dismiss-fallback-3"));
+        addIfNotNull(chain, getString("overlay-dismiss-fallback-4"));
         return chain;
     }
 

@@ -48,6 +48,10 @@ public class DebateStatusResponse {
     /** 失败原因（FAILED 状态时展示）。 */
     private String failureReason;
 
+    /** 单方失败警告（研讨完成但部分讨论方未参与时展示）。 */
+    @Builder.Default
+    private List<String> platformFailures = new ArrayList<>();
+
     /** 进度步骤树。 */
     @Builder.Default
     private List<ProgressStepDto> steps = new ArrayList<>();

@@ -96,6 +96,8 @@ public class DeepSeekAdapter implements PlatformAdapter {
         String response = earlyResponse.orElseGet(() -> {
             String clip = clipboardExtractor.extractViaClipboard(page, selectors, "DeepSeek");
             if (!clip.isBlank()) return clip;
+            String stableDom = extractLatestResponseWithStability();
+            if (!stableDom.isBlank()) return stableDom;
             String afterText = extractPageText();
             String diff = diffText(beforeText, afterText);
             return diff.isBlank() ? extractLatestResponseFromDom() : diff;
@@ -151,6 +153,36 @@ public class DeepSeekAdapter implements PlatformAdapter {
      */
     private String extractLatestResponseForPolling() {
         return extractLatestResponseFromDom();
+    }
+
+    /**
+     * 轮询 DOM 直到文本连续稳定，避免流式输出未完成时过早截断。
+     */
+    private String extractLatestResponseWithStability() {
+        String last = "";
+        int stableCount = 0;
+        for (int i = 0; i < 12 && stableCount < 2; i++) {
+            sleepQuietly(500);
+            String current = extractLatestResponseFromDom();
+            if (!current.isBlank() && current.equals(last)) {
+                stableCount++;
+            } else {
+                stableCount = 0;
+            }
+            last = current;
+        }
+        if (!last.isBlank()) {
+            log.debug("DeepSeek DOM 稳定提取完成 ({} 字符, stableCount={})", last.length(), stableCount);
+        }
+        return last;
+    }
+
+    private void sleepQuietly(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
