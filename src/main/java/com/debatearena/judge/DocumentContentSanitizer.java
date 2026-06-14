@@ -10,8 +10,13 @@ public final class DocumentContentSanitizer {
 
     private static final Pattern FIRST_HEADING = Pattern.compile("(?m)^#\\s+.+");
     private static final Pattern TRAILING_FILLER = Pattern.compile(
-            "\n+---\n+(?:如有|若需|希望|以上(?:就是|为)|如需).*$",
+            "\n+---\n+(?:如有|若需|希望|以上(?:就是|为)|如需|如果).*$",
             Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
+
+    /** 文末延伸服务话术（如「如果需要，我可以补充…」及后续列表）。 */
+    private static final Pattern TRAILING_OFFER_BLOCK = Pattern.compile(
+            "(?s)\\n+(?:---+\\s*\\n+)?(?:如果(?:你)?需要|如需(?:进一步)?|若需(?:进一步)?|如需要)[，,:：][\\s\\S]*$",
+            Pattern.CASE_INSENSITIVE);
 
     private DocumentContentSanitizer() {
     }
@@ -63,9 +68,13 @@ public final class DocumentContentSanitizer {
     }
 
     /**
-     * 去掉文末常见的礼貌性结语。
+     * 去掉文末常见的礼貌性结语与延伸服务提议。
      */
     private static String stripTrailingFiller(String text) {
+        Matcher offerMatcher = TRAILING_OFFER_BLOCK.matcher(text);
+        if (offerMatcher.find()) {
+            text = text.substring(0, offerMatcher.start()).stripTrailing();
+        }
         Matcher matcher = TRAILING_FILLER.matcher(text);
         if (matcher.find()) {
             return text.substring(0, matcher.start()).stripTrailing();

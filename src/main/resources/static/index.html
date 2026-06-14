@@ -185,6 +185,20 @@
     </div>
 </div>
 
+<div id="bubble-modal" class="bubble-modal" hidden aria-hidden="true">
+    <div class="bubble-modal-backdrop" data-bubble-modal-close></div>
+    <div class="bubble-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="bubble-modal-title">
+        <div class="bubble-modal-header">
+            <div class="bubble-modal-heading">
+                <h3 id="bubble-modal-title" class="bubble-modal-title"></h3>
+                <span id="bubble-modal-tag" class="chat-tag bubble-modal-tag"></span>
+            </div>
+            <button type="button" class="bubble-modal-close" data-bubble-modal-close aria-label="关闭">×</button>
+        </div>
+        <div id="bubble-modal-body" class="bubble-modal-body md-preview chat-bubble-md"></div>
+    </div>
+</div>
+
 <div id="toast-root" aria-live="polite"></div>
 <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar(false)"></div>
 

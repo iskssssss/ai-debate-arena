@@ -63,8 +63,9 @@ public class ApiJudgeService implements JudgeService {
             String userPrompt = buildRoundUserPrompt(session, round);
             String analysis = apiClient.chat(apiKey, session.getJudgeModel(),
                     getRoundSystemPrompt(), userPrompt);
-            log.info("⚖️ 第 {} 轮整理完成 ({} 字符)", round.getRoundNumber(), analysis.length());
-            return JudgeRoundRecord.success(analysis);
+            String cleaned = DocumentContentSanitizer.sanitize(analysis);
+            log.info("⚖️ 第 {} 轮整理完成 ({} 字符)", round.getRoundNumber(), cleaned.length());
+            return JudgeRoundRecord.success(cleaned);
         } catch (Exception e) {
             log.error("本轮整理失败 — round={}: {}", round.getRoundNumber(), e.getMessage());
             return JudgeRoundRecord.failure(e.getMessage());
@@ -104,8 +105,9 @@ public class ApiJudgeService implements JudgeService {
             String userPrompt = buildFinalUserPrompt(session);
             String analysis = apiClient.chat(apiKey, session.getJudgeModel(),
                     getFinalSystemPrompt(), userPrompt);
-            log.info("⚖️ 最终整理报告完成 ({} 字符)", analysis.length());
-            return JudgeRoundRecord.success(analysis);
+            String cleaned = DocumentContentSanitizer.sanitize(analysis);
+            log.info("⚖️ 最终整理报告完成 ({} 字符)", cleaned.length());
+            return JudgeRoundRecord.success(cleaned);
         } catch (Exception e) {
             log.error("最终整理报告生成失败: {}", e.getMessage());
             return JudgeRoundRecord.failure(e.getMessage());

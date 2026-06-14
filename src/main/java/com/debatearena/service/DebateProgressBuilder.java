@@ -248,6 +248,11 @@ public class DebateProgressBuilder {
         } else if (session.getFinalJudgeRecord() != null && session.getFinalJudgeRecord().isSuccess()) {
             state = "done";
             detail = "整理完成";
+        } else if (session.getFinalJudgeRecord() != null) {
+            state = "error";
+            detail = session.getFinalJudgeRecord().getErrorMessage() != null
+                    ? session.getFinalJudgeRecord().getErrorMessage()
+                    : "整理失败";
         } else if (isTerminal(session) && !session.isJudgeEnabled()) {
             state = "done";
         } else if (isTerminal(session)) {

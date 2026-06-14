@@ -526,11 +526,17 @@ public class DebateOrchestrator {
     }
 
     /**
-     * 赛后异步任务：按勾选类型生成完整产出文档。
+     * 赛后异步任务：最终整理 + 按勾选类型生成完整产出文档。
      */
     private void runPostDebateWork(DebateSession session) {
         try {
-            outputDocumentService.generateRequestedDocuments(session, resolveJudge(session));
+            JudgeService judge = resolveJudge(session);
+            if (judge.isJudgeEnabled(session)) {
+                log.info("⚖️ 开始最终整理 — session={}", session.getSessionId());
+                session.setFinalJudgeRecord(judge.summarizeFinal(session));
+                stateStore.saveSnapshot(session.getSessionId(), session.getCurrentRoundNumber(), session);
+            }
+            outputDocumentService.generateRequestedDocuments(session, judge);
             stateStore.saveSnapshot(session.getSessionId(), session.getCurrentRoundNumber(), session);
             log.info("📚 产出文档处理完成 — session={}", session.getSessionId());
         } catch (Exception e) {
@@ -706,7 +712,8 @@ public class DebateOrchestrator {
     }
 
     /**
-     * 清理所有适配器资源（辩论结束后调用）。
+     * 清理讨论方适配器资源（辩论主流程结束后调用）。
+     * 整理通道浏览器由 ChannelJudgeService 独立管理，不在此处关闭。
      */
     private void cleanupAdapters() {
         log.info("🧹 清理适配器资源…");

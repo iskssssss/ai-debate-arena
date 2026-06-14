@@ -41,12 +41,101 @@ public class ProfileManager {
      * 获取指定平台的 Profile 路径。
      */
     public Path getProfilePath(AiPlatform platform) {
+        return resolveProfileBasePath().resolve(platform.name().toLowerCase());
+    }
+
+    /**
+     * 获取整理通道专用的独立 Profile 路径（与讨论方 Profile 分离，避免浏览器锁冲突）。
+     */
+    public Path getJudgeProfilePath(AiPlatform platform) {
+        return resolveProfileBasePath().resolve("judge").resolve(platform.name().toLowerCase());
+    }
+
+    /**
+     * 展开 profile 根目录配置。
+     */
+    private Path resolveProfileBasePath() {
         String base = browserConfig.getProfileBaseDir();
-        // 展开 ${user.home} 占位符
         if (base.contains("${user.home}")) {
             base = base.replace("${user.home}", System.getProperty("user.home"));
         }
-        return Paths.get(base, platform.name().toLowerCase());
+        return Paths.get(base);
+    }
+
+    /**
+     * 确保整理通道 Profile 可用：若尚未初始化，则从讨论方 Profile 复制登录态种子。
+     */
+    public void ensureJudgeProfileSeeded(AiPlatform platform) {
+        Path judgePath = getJudgeProfilePath(platform);
+        if (isProfileReadyAt(judgePath)) {
+            return;
+        }
+        Path mainPath = getProfilePath(platform);
+        if (!isProfileReady(platform)) {
+            throw new IllegalStateException(platform.name() + " 讨论方 Profile 未就绪，无法为整理通道复制登录态");
+        }
+        log.info("📋 整理通道 {} 首次使用，从讨论方 Profile 复制登录态 — {} → {}",
+                platform.name(), mainPath, judgePath);
+        copyProfileDirectory(mainPath, judgePath);
+    }
+
+    /**
+     * 检查指定路径下的 Profile 是否包含浏览器会话数据。
+     */
+    private boolean isProfileReadyAt(Path profilePath) {
+        if (!Files.exists(profilePath) || !Files.isDirectory(profilePath)) {
+            return false;
+        }
+        Path defaultDir = profilePath.resolve("Default");
+        return Files.exists(defaultDir) && Files.isDirectory(defaultDir);
+    }
+
+    /**
+     * 递归复制 Profile 目录（用于整理通道首次种子同步）。
+     */
+    private void copyProfileDirectory(Path source, Path target) {
+        try {
+            if (Files.exists(target)) {
+                deleteProfileDirectory(target);
+            }
+            Files.createDirectories(target);
+            try (var files = Files.walk(source)) {
+                files.forEach(sourcePath -> {
+                    try {
+                        Path relative = source.relativize(sourcePath);
+                        Path destinationPath = target.resolve(relative);
+                        if (Files.isDirectory(sourcePath)) {
+                            Files.createDirectories(destinationPath);
+                        } else {
+                            Files.createDirectories(destinationPath.getParent());
+                            Files.copy(sourcePath, destinationPath);
+                        }
+                    } catch (Exception e) {
+                        throw new IllegalStateException("复制 Profile 文件失败: " + sourcePath, e);
+                    }
+                });
+            }
+            log.info("✅ 整理通道 Profile 种子复制完成 — {}", target);
+        } catch (Exception e) {
+            throw new IllegalStateException("复制整理通道 Profile 失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 删除指定 Profile 目录（整理通道种子复制前的清理）。
+     */
+    private void deleteProfileDirectory(Path profilePath) {
+        try (var files = Files.walk(profilePath)) {
+            files.sorted(java.util.Comparator.reverseOrder())
+                    .forEach(path -> {
+                        try {
+                            Files.deleteIfExists(path);
+                        } catch (Exception ignored) {
+                        }
+                    });
+        } catch (Exception e) {
+            log.warn("清理 Profile 目录失败: {} — {}", profilePath, e.getMessage());
+        }
     }
 
     /**

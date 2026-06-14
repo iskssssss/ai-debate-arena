@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Playwright 生命周期管理器。
@@ -29,8 +30,11 @@ public class PlaywrightManager {
     /** 每个平台独立的 Playwright 驱动。 */
     private final Map<AiPlatform, Playwright> playwrights = new EnumMap<>(AiPlatform.class);
 
-    /** 每个 AI 平台对应一个持久化 BrowserContext。 */
+    /** 每个 AI 平台对应一个持久化 BrowserContext（讨论方专用）。 */
     private final Map<AiPlatform, BrowserContext> contexts = new EnumMap<>(AiPlatform.class);
+
+    /** 每个研讨会话对应一套独立的整理通道浏览器资源（与讨论方隔离）。 */
+    private final Map<String, JudgeBrowserResources> judgeResources = new ConcurrentHashMap<>();
 
     /**
      * 获取指定平台的 Playwright 实例（懒创建）。
@@ -139,6 +143,63 @@ public class PlaywrightManager {
         return contexts.get(platform);
     }
 
+    /**
+     * 为整理通道启动独立的持久化 BrowserContext（按会话隔离，不复用讨论方 Context）。
+     */
+    public synchronized BrowserContext launchJudgePersistentContext(String sessionId,
+                                                                    AiPlatform platform,
+                                                                    Path userDataDir) {
+        if (judgeResources.containsKey(sessionId)) {
+            log.warn("整理通道 {} 的 BrowserContext 已存在，先关闭旧的 — session={}",
+                    platform.name(), sessionId);
+            closeJudgeResources(sessionId);
+        }
+
+        Playwright playwright = Playwright.create();
+        BrowserType.LaunchPersistentContextOptions options = buildLaunchOptions(config.isHeadless());
+        if ("chrome".equals(config.getChannel())) {
+            options.setChannel("chrome");
+        }
+
+        BrowserContext context = playwright.chromium().launchPersistentContext(userDataDir, options);
+        judgeResources.put(sessionId, new JudgeBrowserResources(platform, playwright, context));
+        log.info("✅ 整理通道 {} 独立 BrowserContext 已启动 — session={}, profileDir={}",
+                platform.name(), sessionId, userDataDir);
+        return context;
+    }
+
+    /**
+     * 关闭指定会话的整理通道浏览器资源（Context + Playwright）。
+     */
+    public synchronized void closeJudgeResources(String sessionId) {
+        JudgeBrowserResources resources = judgeResources.remove(sessionId);
+        if (resources == null) {
+            return;
+        }
+        try {
+            if (resources.context() != null) {
+                resources.context().close();
+            }
+        } catch (Exception e) {
+            log.warn("关闭整理通道 BrowserContext 失败 — session={}: {}", sessionId, e.getMessage());
+        }
+        try {
+            if (resources.playwright() != null) {
+                resources.playwright().close();
+            }
+        } catch (Exception e) {
+            log.warn("关闭整理通道 Playwright 失败 — session={}: {}", sessionId, e.getMessage());
+        }
+        log.info("🔒 整理通道独立浏览器已关闭 — session={}, platform={}",
+                sessionId, resources.platform().name());
+    }
+
+    /**
+     * 整理通道浏览器资源持有者。
+     */
+    private record JudgeBrowserResources(AiPlatform platform, Playwright playwright, BrowserContext context) {
+    }
+
     public synchronized void closeAllContexts() {
         for (AiPlatform platform : AiPlatform.values()) {
             closeContext(platform);
@@ -152,6 +213,9 @@ public class PlaywrightManager {
     @PreDestroy
     public void destroy() {
         log.info("🔒 关闭所有浏览器资源...");
+        for (String sessionId : judgeResources.keySet().toArray(new String[0])) {
+            closeJudgeResources(sessionId);
+        }
         closeAllContexts();
         for (AiPlatform platform : AiPlatform.values()) {
             closePlaywright(platform);

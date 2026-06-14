@@ -26,8 +26,8 @@ import java.util.concurrent.TimeUnit;
 /**
  * 通道整理服务 —— 通过浏览器自动化向指定 AI 通道发送整理提示词。
  * <p>
- * 每个研讨会话维护一个独立的 Playwright Page + PlatformAdapter，
- * 与辩论用的 Page 完全隔离（同一 BrowserContext 下的不同 Tab）。
+ * 每个研讨会话维护独立的 Playwright 驱动、BrowserContext 与 PlatformAdapter，
+ * 与讨论方浏览器完全隔离（独立 Profile 目录 + 独立任务队列）。
  */
 @Slf4j
 @Service("channelJudgeService")
@@ -60,10 +60,12 @@ public class ChannelJudgeService implements JudgeService {
         String url = getPlatformUrl(platformKey);
         SelectorProvider selectors = YamlSelectorProvider.load(platformKey, url);
 
-        // 获取或创建该平台的 BrowserContext（复用登录态）
-        BrowserContext context = profileManager.getOrCreateContext(platform, selectors);
+        // 整理通道使用独立 Profile，避免与讨论方共用 BrowserContext 时互相关闭
+        profileManager.ensureJudgeProfileSeeded(platform);
+        BrowserContext context = playwrightManager.launchJudgePersistentContext(
+                sessionId, platform, profileManager.getJudgeProfilePath(platform));
 
-        // 创建独立的 Page（新 Tab，与辩论 Page 隔离）
+        // 创建独立的 Page 与 Adapter
         Page page = context.newPage();
         log.info("📄 为整理通道 {} 创建独立浏览器页面 — session={}", platform.name(), sessionId);
 
@@ -148,6 +150,7 @@ public class ChannelJudgeService implements JudgeService {
         } catch (Exception e) {
             log.warn("关闭整理通道页面异常 — session={}: {}", sessionId, e.getMessage());
         }
+        playwrightManager.closeJudgeResources(sessionId);
         log.info("🔒 整理通道资源已清理 — session={}, platform={}", sessionId, ctx.platform.name());
     }
 
@@ -166,17 +169,18 @@ public class ChannelJudgeService implements JudgeService {
                 log.warn("重置对话上下文失败（非致命）: {}", e.getMessage());
             }
 
-            // 通过平台队列提交（序列化同平台操作）
-            CompletableFuture<String> future = platformQueueManager.submit(
+            // 通过整理通道专用队列提交，避免与讨论方共用平台时互相阻塞或污染
+            CompletableFuture<String> future = platformQueueManager.submitForJudge(
                     ctx.platform,
                     () -> ctx.adapter.sendPrompt(prompt)
                             .get(debateConfig.getAiTimeoutSeconds(), TimeUnit.SECONDS)
             );
 
             String response = future.get(debateConfig.getAiTimeoutSeconds() + 10, TimeUnit.SECONDS);
+            String cleaned = DocumentContentSanitizer.sanitize(response);
             log.info("⚖️ {} 通道整理完成 ({} 字符) — session={}",
-                    label, response.length(), sessionId);
-            return JudgeRoundRecord.success(response);
+                    label, cleaned.length(), sessionId);
+            return JudgeRoundRecord.success(cleaned);
 
         } catch (java.util.concurrent.TimeoutException e) {
             log.error("通道整理超时 — {}: {}", label, e.getMessage());
@@ -321,7 +325,7 @@ public class ChannelJudgeService implements JudgeService {
     // ---- Inner class ----
 
     /**
-     * 每个研讨会话的整理通道上下文 —— 持有独立的 Page 和 Adapter。
+     * 每个研讨会话的整理通道上下文 —— 持有独立 Profile 下的 Page 与 Adapter。
      */
     private static class JudgePageContext {
         final AiPlatform platform;

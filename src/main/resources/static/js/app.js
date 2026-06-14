@@ -7,7 +7,8 @@ import {
     restoreThresholdPct, startDebate, onJudgeModeChange
 } from './debate-form.js';
 import {
-    openSession, lookupDebate, retryRoundJudge, cancelDebate, switchDetailTab, scrollToChatAnchor
+    openSession, lookupDebate, retryRoundJudge, cancelDebate, switchDetailTab, scrollToChatAnchor,
+    openBubbleModal, closeBubbleModal, bindBubbleModalEvents
 } from './debate-detail.js';
 import {
     updateDocumentDescription, previewSelectedDocument, downloadSelectedDocument, scrollToHeading
@@ -37,6 +38,8 @@ function bindGlobals() {
         cancelDebate,
         switchDetailTab,
         scrollToChatAnchor,
+        openBubbleModal,
+        closeBubbleModal,
         updateDocumentDescription,
         previewSelectedDocument,
         downloadSelectedDocument,
@@ -106,4 +109,5 @@ function initDesktopClient() {
 bindGlobals();
 restoreLocalSettings();
 initDesktopClient();
+bindBubbleModalEvents();
 initApp();

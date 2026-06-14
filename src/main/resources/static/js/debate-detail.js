@@ -103,6 +103,100 @@ function bindOverviewClickEvents() {
     });
 }
 
+/** 气泡放大事件是否已绑定到详情根节点。 */
+let bubbleExpandBound = false;
+
+/**
+ * 打开聊天气泡内容放大弹窗。
+ * @param {string} title 发送方名称
+ * @param {string} tag 消息类型标签
+ * @param {string} content 原始 Markdown 正文
+ */
+export function openBubbleModal(title, tag, content) {
+    const modal = document.getElementById('bubble-modal');
+    const titleEl = document.getElementById('bubble-modal-title');
+    const tagEl = document.getElementById('bubble-modal-tag');
+    const bodyEl = document.getElementById('bubble-modal-body');
+    if (!modal || !titleEl || !tagEl || !bodyEl) return;
+
+    titleEl.textContent = title || '消息内容';
+    if (tag) {
+        tagEl.textContent = tag;
+        tagEl.hidden = false;
+    } else {
+        tagEl.textContent = '';
+        tagEl.hidden = true;
+    }
+    bodyEl.innerHTML = renderMarkdown(content || '');
+    modal.hidden = false;
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('bubble-modal-open');
+    modal.querySelector('.bubble-modal-close')?.focus();
+}
+
+/**
+ * 关闭聊天气泡放大弹窗。
+ */
+export function closeBubbleModal() {
+    const modal = document.getElementById('bubble-modal');
+    if (!modal || modal.hidden) return;
+    modal.hidden = true;
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('bubble-modal-open');
+    document.getElementById('bubble-modal-body')?.replaceChildren();
+}
+
+/**
+ * 绑定气泡点击放大事件（委托到 debate-detail 根节点，轮询重渲染后仍有效）。
+ */
+function bindBubbleExpandEvents() {
+    const root = document.getElementById('debate-detail');
+    if (!root || bubbleExpandBound) return;
+    bubbleExpandBound = true;
+
+    root.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return;
+        const bubble = e.target.closest('.chat-bubble-expandable');
+        if (!bubble) return;
+        const raw = bubble.querySelector('.chat-bubble-raw')?.value;
+        if (!raw?.trim()) return;
+        const msg = bubble.closest('.chat-msg');
+        const title = msg?.querySelector('.chat-sender')?.textContent?.trim() || '消息内容';
+        const tag = msg?.querySelector('.chat-tag')?.textContent?.trim() || '';
+        openBubbleModal(title, tag, raw);
+    });
+
+    root.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const bubble = e.target.closest('.chat-bubble-expandable');
+        if (!bubble) return;
+        e.preventDefault();
+        bubble.click();
+    });
+}
+
+/** 弹窗是否已绑定全局关闭事件。 */
+let bubbleModalBound = false;
+
+/** 绑定弹窗遮罩、关闭按钮与 Esc 键（全局只绑定一次）。 */
+export function bindBubbleModalEvents() {
+    if (bubbleModalBound) return;
+    bubbleModalBound = true;
+
+    const modal = document.getElementById('bubble-modal');
+    if (!modal) return;
+
+    modal.addEventListener('click', (e) => {
+        if (e.target.closest('[data-bubble-modal-close]')) {
+            closeBubbleModal();
+        }
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeBubbleModal();
+    });
+}
+
 /** 渲染活跃步骤的子任务列表（用于概览时间线）。 */
 function renderStepChildrenForOverview(step, steps) {
     const active = steps?.find(s => s.state === 'active');
@@ -181,10 +275,17 @@ function renderChatBubbleContent(content) {
     return `<div class="md-preview chat-bubble-md">${renderMarkdown(content)}</div>`;
 }
 
-/** 包裹气泡外壳与内层滚动区，避免原生滚动条破坏圆角。 */
-function wrapChatBubble(bubbleCls, innerHtml) {
-    return `<div class="chat-bubble ${bubbleCls}">
+/** 包裹气泡外壳与内层滚动区，避免原生滚动条破坏圆角；有正文时可点击放大。 */
+function wrapChatBubble(bubbleCls, innerHtml, rawContent) {
+    const hasContent = rawContent != null && String(rawContent).trim();
+    if (!hasContent) {
+        return `<div class="chat-bubble ${bubbleCls}">
+            <div class="chat-bubble-scroll">${innerHtml}</div>
+        </div>`;
+    }
+    return `<div class="chat-bubble ${bubbleCls} chat-bubble-expandable" role="button" tabindex="0" title="点击查看完整内容">
         <div class="chat-bubble-scroll">${innerHtml}</div>
+        <textarea class="chat-bubble-raw" hidden readonly>${escapeHtml(rawContent)}</textarea>
     </div>`;
 }
 
@@ -198,7 +299,7 @@ function renderChatBubble({ avatar, avatarCls, sender, tag, bubbleCls, content, 
                 ${tag ? `<span class="chat-tag">${escapeHtml(tag)}</span>` : ''}
                 ${charCount ? `<span>${charCount} 字</span>` : ''}
             </div>
-            ${wrapChatBubble(`chat-bubble-${bubbleCls}`, renderChatBubbleContent(content))}
+            ${wrapChatBubble(`chat-bubble-${bubbleCls}`, renderChatBubbleContent(content), content)}
         </div>
     </div>`;
 }
@@ -244,7 +345,7 @@ function renderRoundChatContent(r) {
                 <div class="chat-avatar chat-avatar-judge">整</div>
                 <div class="chat-body">
                     <div class="chat-meta"><span class="chat-sender">本轮整理</span><span class="chat-tag">摘要</span></div>
-                    ${wrapChatBubble('chat-bubble-judge', renderChatBubbleContent(r.judgeRecord.analysis || ''))}
+                    ${wrapChatBubble('chat-bubble-judge', renderChatBubbleContent(r.judgeRecord.analysis || ''), r.judgeRecord.analysis || '')}
                 </div>
             </div>`;
         } else {
@@ -252,7 +353,7 @@ function renderRoundChatContent(r) {
                 <div class="chat-avatar chat-avatar-judge">整</div>
                 <div class="chat-body">
                     <div class="chat-meta"><span class="chat-sender">本轮整理</span><span class="chat-tag">失败</span></div>
-                    ${wrapChatBubble('chat-bubble-judge chat-bubble-error', renderChatBubbleContent(r.judgeRecord.errorMessage || '整理失败'))}
+                    ${wrapChatBubble('chat-bubble-judge chat-bubble-error', renderChatBubbleContent(r.judgeRecord.errorMessage || '整理失败'), r.judgeRecord.errorMessage || '整理失败')}
                     <button class="btn btn-outline btn-sm" style="margin-top:8px;" onclick="retryRoundJudge(${r.roundNumber})">重试整理</button>
                 </div>
             </div>`;
@@ -288,7 +389,7 @@ function renderFullChatFeed(judge) {
                 <div class="chat-avatar chat-avatar-judge">终</div>
                 <div class="chat-body">
                     <div class="chat-meta"><span class="chat-sender">最终整理</span></div>
-                    ${wrapChatBubble('chat-bubble-judge', renderChatBubbleContent(judge.finalJudge.analysis || ''))}
+                    ${wrapChatBubble('chat-bubble-judge', renderChatBubbleContent(judge.finalJudge.analysis || ''), judge.finalJudge.analysis || '')}
                 </div>
             </div>`;
         } else if (judge.finalJudge.errorMessage) {
@@ -296,7 +397,7 @@ function renderFullChatFeed(judge) {
                 <div class="chat-avatar chat-avatar-judge">终</div>
                 <div class="chat-body">
                     <div class="chat-meta"><span class="chat-sender">最终整理</span><span class="chat-tag">失败</span></div>
-                    ${wrapChatBubble('chat-bubble-judge chat-bubble-error', renderChatBubbleContent(judge.finalJudge.errorMessage))}
+                    ${wrapChatBubble('chat-bubble-judge chat-bubble-error', renderChatBubbleContent(judge.finalJudge.errorMessage), judge.finalJudge.errorMessage)}
                 </div>
             </div>`;
         } else {
@@ -458,6 +559,7 @@ export async function lookupDebate(silent, options = {}) {
         );
         switchDetailTab(tabToRestore, { skipSave: !options.restoreDetailTab && !!silent });
         bindOverviewClickEvents();
+        bindBubbleExpandEvents();
 
         if (chatScrollY !== null) {
             restoreChatPaneScroll(chatScrollY);
