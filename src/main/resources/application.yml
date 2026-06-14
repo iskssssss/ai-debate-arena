@@ -1,0 +1,60 @@
+# ============================================================================
+# AI Debate Arena — 主配置文件
+# ============================================================================
+
+debate:
+  # 最大辩论轮数（达到后强制终止）
+  max-rounds: 5
+  # 收敛判定默认阈值（0.5 ~ 1.0）；每场研讨可在 UI/API 单独配置
+  convergence-threshold: 0.75
+  # 单次 AI 交互超时（秒）
+  ai-timeout-seconds: 120
+  # 是否并行执行各 AI（true = 一轮内三个 AI 同时交互）
+  parallel-execution: true
+  # 异步辩论执行线程池
+  executor:
+    core-pool-size: 4
+    max-pool-size: 8
+    queue-capacity: 100
+
+judge:
+  base-url: https://api.deepseek.com
+  default-model: deepseek-v4-flash
+  timeout-seconds: 120
+
+browser:
+  # 持久化 profile 根目录
+  profile-base-dir: ${user.home}/.ai-debate-arena/profiles
+  # 浏览器渠道：chromium（Playwright 内置）或 chrome（系统安装）
+  channel: chromium
+  # 无头模式（生产环境 true，调试时 false）
+  headless: true
+  # 慢放延迟（毫秒），0 = 禁用，调试时可设 300-500
+  slow-mo: 0
+  # 视口大小
+  viewport-width: 1280
+  viewport-height: 900
+
+ai-platforms:
+  platforms:
+    gemini:
+      name: "Gemini"
+      url: "https://gemini.google.com"
+      enabled: true
+    chatgpt:
+      name: "ChatGPT"
+      url: "https://chatgpt.com"
+      enabled: true
+    deepseek:
+      name: "DeepSeek"
+      url: "https://chat.deepseek.com"
+      enabled: true
+
+spring:
+  threads:
+    virtual:
+      enabled: false  # Playwright 需要平台线程
+
+logging:
+  level:
+    com.debatearena: INFO

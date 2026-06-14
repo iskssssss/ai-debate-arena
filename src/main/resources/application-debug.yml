@@ -1,0 +1,33 @@
+# ============================================================================
+# AI Debate Arena — 调试配置（mvn spring-boot:run -Dspring-boot.run.profiles=debug）
+# ============================================================================
+
+server:
+  port: 8080
+
+browser:
+  headless: false      # 显示浏览器窗口
+  slow-mo: 0           # 日常研讨关闭慢放；调试选择器时可改为 300-500
+
+debate:
+  parallel-execution: false  # 多平台共享机器资源时串行更稳定；各平台已有独立 Playwright 驱动
+  max-rounds: 4
+
+logging:
+  level:
+    root: INFO
+    com.debatearena: DEBUG
+    com.debatearena.adapter: DEBUG
+    com.debatearena.browser: DEBUG
+    com.debatearena.orchestrator: DEBUG
+    com.debatearena.controller: DEBUG
+    com.debatearena.convergence: DEBUG
+    com.debatearena.persistence: DEBUG
+    com.debatearena.prompts: DEBUG
+    com.debatearena.reporting: DEBUG
+    com.microsoft.playwright: DEBUG
+    org.springframework.web: DEBUG
+    org.springframework.web.servlet.DispatcherServlet: DEBUG
+    org.springframework.scheduling: DEBUG
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %clr(%-5level) %clr([%15.15t]){faint} %clr(%-36.36logger{36}){cyan} : %msg%n"

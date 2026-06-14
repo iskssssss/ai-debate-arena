@@ -1,0 +1,24 @@
+# ============================================================================
+# AI Debate Arena — 桌面客户端配置（Electron 自动启动）
+# ============================================================================
+
+server:
+  address: 127.0.0.1
+
+desktop:
+  enabled: true
+
+browser:
+  # 各平台使用独立 Playwright 浏览器窗口，登录态保存在本机 Profile 目录。
+  headless: false
+  slow-mo: 0
+
+debate:
+  # 桌面客户端默认优先稳定性，避免多平台窗口同时争抢本机资源。
+  parallel-execution: false
+  max-rounds: 4
+
+logging:
+  level:
+    root: INFO
+    com.debatearena: INFO

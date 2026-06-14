@@ -1,0 +1,43 @@
+{
+  "name": "ai-debate-arena-desktop",
+  "version": "1.0.0",
+  "description": "方案研讨台跨平台桌面客户端",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "backend:package": "node electron/build-backend.js",
+    "desktop:dev": "npm run backend:package && electron .",
+    "desktop:pack": "npm run backend:package && electron-builder --dir",
+    "desktop:build": "npm run backend:package && electron-builder"
+  },
+  "build": {
+    "appId": "com.debatearena.desktop",
+    "productName": "方案研讨台",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "target/ai-debate-arena-1.0.0-SNAPSHOT.jar",
+        "to": "backend/app.jar"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  },
+  "devDependencies": {
+    "electron": "^42.4.0",
+    "electron-builder": "^26.15.3"
+  }
+}

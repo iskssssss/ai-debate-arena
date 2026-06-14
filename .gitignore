@@ -1,0 +1,39 @@
+# Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.jar
+*.war
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+factory.path
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Logs
+logs/
+*.log
+
+# Playwright
+node_modules/
+
+# Electron
+dist/
+release/
+*.blockmap
+
+# Spring Boot
+spring-shell.log
+
+# Temporary
+*.tmp
+*.bak

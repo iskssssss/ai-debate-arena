@@ -1,0 +1,39 @@
+# ============================================================================
+# DeepSeek (chat.deepseek.com) 页面元素选择器
+# 注意：DeepSeek 使用 CSS Modules，类名可能随版本变化
+# ============================================================================
+
+platform: deepseek
+selectors:
+  # 输入框（标准 textarea）
+  input: "textarea[placeholder*='发送消息']"
+  input-fallback: "textarea[placeholder*='Send']"
+  input-fallback-2: "textarea"
+  input-fallback-3: "#chat-input"
+  # 发送按钮（DeepSeek 以 Enter 发送为主，此处为备用）
+  submit: "button[aria-label*='发送']"
+  submit-fallback: "#chat-input ~ div[role='button'], textarea ~ div[role='button']"
+  # 响应区域 —— DeepSeek 的 Markdown 渲染容器
+  latest-response: "div.ds-markdown"
+  # 备选：按结构定位消息气泡
+  latest-response-fallback: "div[class*='Message']:last-of-type"
+  # 响应完成标识（最后一条 Markdown 出现且稳定）
+  response-wait-indicator: "div.ds-markdown"
+  # 复制回答按钮（限定最后一条回复区域）
+  copy-response: "div.ds-markdown:last-of-type ~ div div[role='button'].ds-button--icon"
+  copy-response-fallback: "div[class*='ds-message'] div[role='button'].ds-button--icon"
+  # 已登录标识
+  login-indicator: "textarea[placeholder*='发送消息']"
+  login-indicator-fallback: "div[class*='Sidebar']"
+  # 停止生成按钮
+  stop-generating: "button[aria-label*='停止']"
+  stop-generating-fallback: "button:has(svg):not([aria-label*='发送'])"
+  # 新建对话按钮
+  new-chat: "button:has-text('新对话')"
+  new-chat-fallback: "div[class*='Sidebar'] button:first-child"
+  # 等待超时配置
+  timeouts:
+    page-load: 15000
+    input-ready: 10000
+    response-complete: 120000
+    indicator-wait: 8000

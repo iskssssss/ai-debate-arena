@@ -1,0 +1,32 @@
+# ============================================================================
+# Gemini (gemini.google.com) 页面元素选择器
+# 当 Gemini UI 变化时，只需修改此文件，无需重新编译
+# ============================================================================
+
+platform: gemini
+selectors:
+  # 输入框（Quill.js 富文本编辑器）
+  input: "div.ql-editor[contenteditable='true']"
+  input-fallback: "div[contenteditable='true']"
+  # 发送按钮
+  submit: "button[aria-label='Send message']"
+  submit-fallback: "button[aria-label='发送消息']"
+  # 响应区域
+  response-container: "div.response-content"
+  latest-response: "message-content:last-of-type div.response-content"
+  # 已登录标识（侧边栏存在即表示已登录）
+  login-indicator: "div[data-test-id='side-nav']"
+  login-indicator-fallback: "nav[aria-label='Side panel']"
+  # 响应完成标识（复制按钮出现 = 生成完毕）
+  response-wait-indicator: "button[aria-label='Copy']"
+  # 停止生成按钮（若此按钮消失 = 生成完毕）
+  stop-generating: "button[aria-label='Stop']"
+  # 新建对话按钮
+  new-chat: "button[aria-label='New chat']"
+  new-chat-fallback: "button[aria-label='开始新对话']"
+  # 等待超时配置
+  timeouts:
+    page-load: 15000
+    input-ready: 10000
+    response-complete: 120000
+    indicator-wait: 8000

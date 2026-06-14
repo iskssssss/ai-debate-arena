@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mvn clean *)",
+      "Bash(ls mvnw*)",
+      "Bash(which mvn *)",
+      "Bash(ls \"C:\\\\Program Files\\\\Apache\\\\Maven\"*)",
+      "Bash(ls \"C:\\\\apache-maven\"*)",
+      "Bash(cmd.exe /c \"where mvn\")",
+      "Read(//c/Users/孔胜/.m2/wrapper/**)",
+      "Bash(find /c -name \"mvn\" -type f)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Users/**)",
+      "Bash(sed -n '37p' \"D:\\\\\\\\project\\\\\\\\ai-debate-arena\\\\\\\\src\\\\\\\\main\\\\\\\\resources\\\\\\\\static\\\\\\\\index.html\")",
+      "Bash(mvn compile *)",
+      "Bash(node -e ' *)"
+    ]
+  }
+}
