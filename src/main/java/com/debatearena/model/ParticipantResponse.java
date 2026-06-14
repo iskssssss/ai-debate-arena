@@ -16,8 +16,11 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class ParticipantResponse {
 
-    /** 产生此回答的 AI 平台。 */
+    /** 产生此回答的 AI 平台（浏览器通道）。 */
     private AiPlatform platform;
+
+    /** 产生此回答的通道 ID（自定义 API 通道）。 */
+    private String channelId;
 
     /** 回答的完整文本内容。 */
     private String content;
@@ -31,6 +34,16 @@ public class ParticipantResponse {
     public static ParticipantResponse of(AiPlatform platform, String content, long responseTimeMs) {
         return ParticipantResponse.builder()
                 .platform(platform)
+                .content(content)
+                .timestamp(LocalDateTime.now())
+                .responseTimeMs(responseTimeMs)
+                .build();
+    }
+
+    /** 创建自定义 API 通道的回答记录。 */
+    public static ParticipantResponse ofChannel(String channelId, String content, long responseTimeMs) {
+        return ParticipantResponse.builder()
+                .channelId(channelId)
                 .content(content)
                 .timestamp(LocalDateTime.now())
                 .responseTimeMs(responseTimeMs)

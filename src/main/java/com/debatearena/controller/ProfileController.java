@@ -23,6 +23,7 @@ public class ProfileController {
 
     private final ProfileManager profileManager;
     private final PlaywrightManager playwrightManager;
+    private final BrowserProcessCleaner browserProcessCleaner;
     private final AiPlatformProperties platformProperties;
 
     /**
@@ -111,6 +112,7 @@ public class ProfileController {
     public ResponseEntity<Void> deleteProfile(@PathVariable String platform) {
         AiPlatform aiPlatform = parsePlatform(platform);
         log.info("🗑️ 删除 {} Profile", aiPlatform.name());
+        playwrightManager.resetPlatform(aiPlatform);
         profileManager.deleteProfile(aiPlatform);
         return ResponseEntity.noContent().build();
     }
@@ -152,6 +154,22 @@ public class ProfileController {
                 }
             } catch (Exception e) {
                 log.error("{} 临时健康检查失败: {}", aiPlatform.name(), e.getMessage());
+                if (browserProcessCleaner.isProfileInUseError(e)) {
+                    browserProcessCleaner.cleanupOrphanedBrowsers("health-retry-" + aiPlatform.name());
+                    try {
+                        var tempContext = playwrightManager.launchPersistentContextForSetup(
+                                aiPlatform, profileManager.getProfilePath(aiPlatform));
+                        try {
+                            LoginStatus loginStatus = profileManager.checkLoginStatus(
+                                    tempContext, aiPlatform, selectors);
+                            return buildHealthResponse(aiPlatform, loginStatus);
+                        } finally {
+                            tempContext.close();
+                        }
+                    } catch (Exception retryEx) {
+                        log.error("{} 健康检查重试仍失败: {}", aiPlatform.name(), retryEx.getMessage());
+                    }
+                }
                 profileManager.updateLoginStatus(aiPlatform, LoginStatus.ERROR);
                 return buildHealthResponse(aiPlatform, LoginStatus.ERROR);
             }

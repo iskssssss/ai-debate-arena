@@ -12,6 +12,7 @@ import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -88,6 +89,38 @@ public class DebateSession {
     @Builder.Default
     private Map<AiPlatform, String> participantAliases = new EnumMap<>(AiPlatform.class);
 
+    /** 用户勾选的参与平台（有序；为空表示默认全部平台）。 */
+    @Builder.Default
+    private List<AiPlatform> selectedPlatforms = new ArrayList<>();
+
+    /** 用户提交时指定的自定义讨论方名称（assign 前暂存）。 */
+    @Builder.Default
+    private Map<AiPlatform, String> customParticipantAliases = new EnumMap<>(AiPlatform.class);
+
+    /** 用户勾选的参与通道 ID（有序）。 */
+    @Builder.Default
+    private List<String> selectedChannelIds = new ArrayList<>();
+
+    /** 本场实际参与研讨的通道 ID（按顺序）。 */
+    @Builder.Default
+    private List<String> participatingChannelIds = new ArrayList<>();
+
+    /** 通道 ID → 讨论方展示名称。 */
+    @Builder.Default
+    private Map<String, String> channelAliases = new LinkedHashMap<>();
+
+    /** 用户提交时指定的通道自定义名称。 */
+    @Builder.Default
+    private Map<String, String> customChannelAliases = new LinkedHashMap<>();
+
+    /** 已失败的通道 ID。 */
+    @Builder.Default
+    private Set<String> failedChannelIds = ConcurrentHashMap.newKeySet();
+
+    /** 通道失败记录（channelId → 说明）。 */
+    @Builder.Default
+    private Map<String, String> channelFailures = new LinkedHashMap<>();
+
     /** 研讨失败时的可读原因（仅整场 FAILED 时展示）。 */
     private String failureReason;
 
@@ -134,8 +167,100 @@ public class DebateSession {
         return participantAliases.getOrDefault(platform, "讨论方");
     }
 
+    /** 获取通道展示名称。 */
+    public String getChannelAlias(String channelId) {
+        return channelAliases.getOrDefault(channelId, channelId);
+    }
+
+    /** 获取用户选择的通道列表；未指定时回退到平台列表映射。 */
+    public List<String> getSelectedChannelIdsOrDefault() {
+        if (selectedChannelIds != null && !selectedChannelIds.isEmpty()) {
+            return selectedChannelIds;
+        }
+        return getSelectedPlatformsOrAll().stream()
+                .map(p -> p.name().toLowerCase())
+                .toList();
+    }
+
+    /** 获取本场活跃参与通道。 */
+    public List<String> getActiveChannelIds() {
+        if (!participatingChannelIds.isEmpty()) {
+            return participatingChannelIds.stream().filter(this::isChannelActive).toList();
+        }
+        return getSelectedChannelIdsOrDefault().stream().filter(this::isChannelActive).toList();
+    }
+
+    /** 获取除自身外其他活跃通道。 */
+    public List<String> getOtherActiveChannelIds(String selfChannelId) {
+        return getActiveChannelIds().stream().filter(id -> !id.equals(selfChannelId)).toList();
+    }
+
+    public boolean isChannelActive(String channelId) {
+        if (selectedChannelIds != null && !selectedChannelIds.isEmpty()
+                && !selectedChannelIds.contains(channelId)) {
+            return false;
+        }
+        return !failedChannelIds.contains(channelId);
+    }
+
+    public void markChannelFailed(String channelId) {
+        failedChannelIds.add(channelId);
+        channelRegistryToPlatform(channelId).ifPresent(this::markPlatformFailed);
+    }
+
+    /** 记录通道失败说明。 */
+    public void recordChannelFailure(String channelId, int roundNum, String reason) {
+        markChannelFailed(channelId);
+        failedAtRound = Math.max(failedAtRound, roundNum);
+        String alias = getChannelAlias(channelId);
+        String phase = roundNum > 0 ? "第 " + roundNum + " 轮" : "准备阶段";
+        String simplified = simplifyFailureReason(reason);
+        channelFailures.put(channelId, alias + " 在" + phase + "未能参与：" + simplified);
+        channelRegistryToPlatform(channelId).ifPresent(p ->
+                recordPlatformFailure(p, roundNum, reason));
+    }
+
+    private Optional<AiPlatform> channelRegistryToPlatform(String channelId) {
+        try {
+            return Optional.of(AiPlatform.valueOf(channelId.toUpperCase()));
+        } catch (IllegalArgumentException e) {
+            return Optional.empty();
+        }
+    }
+
+    /** 当前活跃通道数量。 */
+    public int getActiveChannelCount() {
+        return getActiveChannelIds().size();
+    }
+
+    /** 获取通道最近一轮回答文本。 */
+    public String getLatestResponseTextForChannel(String channelId) {
+        for (int i = rounds.size() - 1; i >= 0; i--) {
+            ParticipantResponse resp = rounds.get(i).getChannelResponse(channelId);
+            if (resp != null && resp.getContent() != null) {
+                return resp.getContent();
+            }
+        }
+        return "";
+    }
+
     /**
-     * 获取本场活跃参与平台列表。
+     * 获取除自身外其他活跃通道的最近回答（用于批判/反驳 Prompt）。
+     */
+    public String getLatestResponsesExceptChannel(String excludeChannelId) {
+        StringBuilder sb = new StringBuilder();
+        for (String channelId : getOtherActiveChannelIds(excludeChannelId)) {
+            String text = getLatestResponseTextForChannel(channelId);
+            if (!text.isBlank()) {
+                sb.append("=== ").append(getChannelAlias(channelId)).append(" ===\n");
+                sb.append(text).append("\n\n");
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 获取指定平台最近一次的回答（从最新轮次向前回溯）。
      */
     public List<AiPlatform> getActivePlatforms() {
         if (!participatingPlatforms.isEmpty()) {
@@ -244,13 +369,27 @@ public class DebateSession {
         return reason;
     }
 
+    /**
+     * 获取用户选择的参与平台；未指定时返回全部平台（保持旧快照兼容）。
+     */
+    public List<AiPlatform> getSelectedPlatformsOrAll() {
+        if (selectedPlatforms != null && !selectedPlatforms.isEmpty()) {
+            return selectedPlatforms;
+        }
+        return Arrays.asList(AiPlatform.values());
+    }
+
     public boolean isPlatformActive(AiPlatform platform) {
+        if (selectedPlatforms != null && !selectedPlatforms.isEmpty()
+                && !selectedPlatforms.contains(platform)) {
+            return false;
+        }
         return !failedPlatforms.contains(platform);
     }
 
     /** 当前活跃（未失败）的平台数量。 */
     public int getActivePlatformCount() {
-        return (int) Arrays.stream(AiPlatform.values())
+        return (int) getSelectedPlatformsOrAll().stream()
                 .filter(this::isPlatformActive)
                 .count();
     }

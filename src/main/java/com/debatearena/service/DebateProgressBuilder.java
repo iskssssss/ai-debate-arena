@@ -127,7 +127,7 @@ public class DebateProgressBuilder {
         }
 
         List<ProgressStepDto> children = new ArrayList<>();
-        for (AiPlatform platform : AiPlatform.values()) {
+        for (AiPlatform platform : session.getSelectedPlatformsOrAll()) {
             if (!session.getParticipatingPlatforms().isEmpty()
                     && !session.getParticipatingPlatforms().contains(platform)
                     && session.getFailedPlatforms().contains(platform)) {

@@ -22,6 +22,10 @@ import com.debatearena.model.RoundType;
 import com.debatearena.prompts.DebatePromptBuilder;
 import com.debatearena.prompts.PromptTemplateService;
 import com.debatearena.reporting.SynthesisGenerator;
+import com.debatearena.service.ApiParticipantService;
+import com.debatearena.service.ChannelRegistryService;
+import com.debatearena.service.ParticipantSelectionHelper;
+import com.debatearena.service.ThirdPartyApiSettingsService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +35,8 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.LinkedHashMap;
+import java.util.Optional;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -67,6 +73,9 @@ public class DebateOrchestrator {
     private final DebateStateStore stateStore;
     private final SynthesisGenerator synthesisGenerator;
     private final ApiJudgeService apiJudgeService;
+    private final ThirdPartyApiSettingsService apiSettingsService;
+    private final ChannelRegistryService channelRegistryService;
+    private final ApiParticipantService apiParticipantService;
     private final OutputDocumentService outputDocumentService;
 
     /** 注入两种整理服务实现（API 与通道），按 bean name 路由。 */
@@ -107,9 +116,11 @@ public class DebateOrchestrator {
 
         // 注册整理服务（API 模式存 Key，通道模式初始化浏览器页面）
         JudgeService activeJudge = resolveJudge(session);
-        if (request.getJudgeMode() == JudgeMode.API
-                && request.getJudgeApiKey() != null && !request.getJudgeApiKey().isBlank()) {
-            apiJudgeService.registerApiKey(sessionId, request.getJudgeApiKey());
+        if (request.getJudgeMode() == JudgeMode.API) {
+            String apiKey = apiSettingsService.resolveApiKey(request.getJudgeApiKey());
+            if (apiKey != null && !apiKey.isBlank()) {
+                apiJudgeService.registerApiKey(sessionId, apiKey);
+            }
         }
         activeJudge.registerSession(sessionId, session);
         sessionCache.put(sessionId, session);
@@ -120,7 +131,7 @@ public class DebateOrchestrator {
 
         try {
             // --- 排除未登录 / 未就绪平台 ---
-            excludeUnloggedPlatforms(session);
+            excludeUnreadyChannels(session);
             promptBuilder.assignParticipantAliases(session);
             log.info("讨论方代号: {}", session.getParticipantAliases());
 
@@ -286,70 +297,71 @@ public class DebateOrchestrator {
      * 执行单轮辩论——向所有活跃平台发送 Prompt。
      */
     DebateRound executeRound(DebateSession session, int roundNum, RoundType type) {
-        log.debug("▶️ 开始第 {} 轮 [{}] — 活跃平台: {}", roundNum, type, session.getActivePlatformCount());
+        log.debug("▶️ 开始第 {} 轮 [{}] — 活跃通道: {}", roundNum, type, session.getActiveChannelCount());
         DebateRound round = DebateRound.builder()
                 .roundNumber(roundNum)
                 .roundType(type)
                 .startedAt(LocalDateTime.now())
                 .build();
 
-        // 向各平台发送 Prompt（并行时各平台仍走独立单线程队列，避免 Playwright 跨线程）
-        Map<AiPlatform, CompletableFuture<String>> futures = new EnumMap<>(AiPlatform.class);
-        for (AiPlatform platform : session.getActivePlatforms()) {
-            if (!session.isPlatformActive(platform)) continue;
-            String prompt = buildPrompt(type, platform, session);
-            round.addPrompt(platform, prompt);
-            log.debug("  {} Prompt 长度: {} 字符", platform.name(), prompt.length());
-            PlatformAdapter adapter = adapters.get(platform);
-            CompletableFuture<String> future = submitSendPrompt(adapter, platform, prompt);
-            futures.put(platform, future);
+        Map<String, CompletableFuture<String>> futures = new LinkedHashMap<>();
+        for (String channelId : session.getActiveChannelIds()) {
+            String prompt = buildChannelPrompt(type, channelId, session);
+            round.addChannelPrompt(channelId, prompt);
+            log.debug("  {} Prompt 长度: {} 字符", channelId, prompt.length());
+            CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return invokeChannel(channelId, prompt);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }, debateExecutor);
+            futures.put(channelId, future);
             if (!debateConfig.isParallelExecution()) {
-                log.debug("串行模式 — 等待 {} 完成后再发送下一平台", platform.name());
                 try {
                     future.get(debateConfig.getAiTimeoutSeconds(), TimeUnit.SECONDS);
                 } catch (Exception e) {
-                    log.error("{} 串行发送失败: {}", platform.name(), extractFailureMessage(e));
+                    log.error("{} 串行发送失败: {}", channelId, extractFailureMessage(e));
                 }
             }
         }
 
-        // 等待所有完成（带超时）
         CompletableFuture<Void> allFutures = CompletableFuture.allOf(
                 futures.values().toArray(new CompletableFuture[0]));
-
         try {
             allFutures.get(debateConfig.getAiTimeoutSeconds(), TimeUnit.SECONDS);
         } catch (TimeoutException e) {
             log.error("⏰ 第 {} 轮超时，等待在途任务收尾…", roundNum);
-            awaitFuturesGracefully(futures, 60);
+            awaitChannelFuturesGracefully(futures, 60);
         } catch (Exception e) {
             log.error("第 {} 轮并行执行异常: {}", roundNum, e.getMessage());
         }
 
-        // 收集结果
         for (var entry : futures.entrySet()) {
-            AiPlatform platform = entry.getKey();
+            String channelId = entry.getKey();
             try {
                 if (entry.getValue().isDone() && !entry.getValue().isCancelled()) {
                     String response = entry.getValue().get();
-                    String prompt = round.getPrompt(platform);
+                    String prompt = round.getChannelPrompt(channelId);
                     String topic = ResponseContentValidator.extractTopicFromPrompt(prompt);
                     if (!ResponseContentValidator.isValid(response, prompt, topic, type)) {
                         throw new BrowserAutomationException(
                                 "回复无效：疑似误抓用户消息、内容过短或结构不完整（" + response.length() + " 字符）");
                     }
-                    round.addResponse(platform,
-                            ParticipantResponse.of(platform, response, 0));
+                    ParticipantResponse pr = channelRegistryService.toAiPlatform(channelId).isPresent()
+                            ? ParticipantResponse.of(channelRegistryService.toAiPlatform(channelId).get(), response, 0)
+                            : ParticipantResponse.ofChannel(channelId, response, 0);
+                    round.addChannelResponse(channelId, pr);
+                    channelRegistryService.toAiPlatform(channelId).ifPresent(p -> round.addResponse(p, pr));
                 }
             } catch (Exception e) {
                 String reason = extractFailureMessage(e);
-                log.error("❌ {} 在第 {} 轮失败，标记为 FAILED: {}", platform.name(), roundNum, reason);
-                session.recordPlatformFailure(platform, roundNum, reason);
+                log.error("❌ {} 在第 {} 轮失败: {}", channelId, roundNum, reason);
+                session.recordChannelFailure(channelId, roundNum, reason);
             }
         }
 
-        // 优雅降级检查
-        if (session.getActivePlatformCount() < 2) {
+        if (session.getActiveChannelCount() < 2) {
             session.setFailedAtRound(roundNum);
             String detail = session.buildTerminalFailureDetail();
             session.markTerminalFailure(detail);
@@ -357,7 +369,7 @@ public class DebateOrchestrator {
         }
 
         round.setCompletedAt(LocalDateTime.now());
-        log.info("✅ 第 {} 轮完成 — 活跃平台: {}", roundNum, session.getActivePlatformCount());
+        log.info("✅ 第 {} 轮完成 — 活跃通道: {}", roundNum, session.getActiveChannelCount());
         return round;
     }
 
@@ -389,8 +401,20 @@ public class DebateOrchestrator {
         }
     }
 
+    private void awaitChannelFuturesGracefully(Map<String, CompletableFuture<String>> futures, int graceSeconds) {
+        for (var entry : futures.entrySet()) {
+            CompletableFuture<String> future = entry.getValue();
+            if (future.isDone()) continue;
+            try {
+                future.get(graceSeconds, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                log.warn("{} 在途任务未能收尾: {}", entry.getKey(), e.getMessage());
+            }
+        }
+    }
+
     /**
-     * 第 2 轮：交叉批判（每个 AI 批判另外两个 AI 的回答）。
+     * 第 2 轮：交叉批判。
      */
     DebateRound executeCritiqueRound(DebateSession session, int roundNum) {
         DebateRound round = DebateRound.builder()
@@ -399,18 +423,19 @@ public class DebateOrchestrator {
                 .startedAt(LocalDateTime.now())
                 .build();
 
-        for (AiPlatform critic : session.getActivePlatforms()) {
-            if (!session.isPlatformActive(critic)) continue;
-
-            String critPrompt = promptBuilder.buildCritiquePrompt(session, critic);
-
-            round.addPrompt(critic, critPrompt);
+        for (String channelId : session.getActiveChannelIds()) {
+            String critPrompt = promptBuilder.buildCritiquePromptForChannel(session, channelId);
+            round.addChannelPrompt(channelId, critPrompt);
             try {
-                String response = invokeAdapter(adapters.get(critic), critic, critPrompt);
-                round.addResponse(critic, ParticipantResponse.of(critic, response, 0));
+                String response = invokeChannel(channelId, critPrompt);
+                ParticipantResponse pr = channelRegistryService.toAiPlatform(channelId).isPresent()
+                        ? ParticipantResponse.of(channelRegistryService.toAiPlatform(channelId).get(), response, 0)
+                        : ParticipantResponse.ofChannel(channelId, response, 0);
+                round.addChannelResponse(channelId, pr);
+                channelRegistryService.toAiPlatform(channelId).ifPresent(p -> round.addResponse(p, pr));
             } catch (Exception e) {
-                log.error("{} 批判轮失败: {}", critic.name(), e.getMessage());
-                session.markPlatformFailed(critic);
+                log.error("{} 批判轮失败: {}", channelId, e.getMessage());
+                session.markChannelFailed(channelId);
             }
         }
 
@@ -429,19 +454,19 @@ public class DebateOrchestrator {
                 .startedAt(LocalDateTime.now())
                 .build();
 
-        for (AiPlatform platform : session.getActivePlatforms()) {
-            if (!session.isPlatformActive(platform)) continue;
-
-            String rebuttalPrompt = promptBuilder.buildRebuttalPrompt(
-                    session, platform, promptBuilder.buildCritiquesForRebuttal(session, platform));
-
-            round.addPrompt(platform, rebuttalPrompt);
+        for (String channelId : session.getActiveChannelIds()) {
+            String rebuttalPrompt = promptBuilder.buildRebuttalPromptForChannel(session, channelId);
+            round.addChannelPrompt(channelId, rebuttalPrompt);
             try {
-                String response = invokeAdapter(adapters.get(platform), platform, rebuttalPrompt);
-                round.addResponse(platform, ParticipantResponse.of(platform, response, 0));
+                String response = invokeChannel(channelId, rebuttalPrompt);
+                ParticipantResponse pr = channelRegistryService.toAiPlatform(channelId).isPresent()
+                        ? ParticipantResponse.of(channelRegistryService.toAiPlatform(channelId).get(), response, 0)
+                        : ParticipantResponse.ofChannel(channelId, response, 0);
+                round.addChannelResponse(channelId, pr);
+                channelRegistryService.toAiPlatform(channelId).ifPresent(p -> round.addResponse(p, pr));
             } catch (Exception e) {
-                log.error("{} 反驳轮失败: {}", platform.name(), e.getMessage());
-                session.markPlatformFailed(platform);
+                log.error("{} 反驳轮失败: {}", channelId, e.getMessage());
+                session.markChannelFailed(channelId);
             }
         }
 
@@ -450,16 +475,19 @@ public class DebateOrchestrator {
         return round;
     }
 
-    /**
-     * 构建指定轮次类型和平台的 Prompt。
-     */
-    private String buildPrompt(RoundType type, AiPlatform platform, DebateSession session) {
+    /** 构建指定通道与轮次类型的 Prompt。 */
+    private String buildChannelPrompt(RoundType type, String channelId, DebateSession session) {
         return switch (type) {
-            case INITIAL -> promptBuilder.buildInitialPrompt(session, platform);
-            case CRITIQUE -> promptBuilder.buildCritiquePrompt(session, platform);
-            case REBUTTAL -> promptBuilder.buildRebuttalPrompt(
-                    session, platform, promptBuilder.buildCritiquesForRebuttal(session, platform));
-            case CONVERGENCE -> promptBuilder.buildConvergencePrompt(session, platform);
+            case INITIAL -> promptBuilder.buildInitialPromptForChannel(session, channelId);
+            case CRITIQUE -> promptBuilder.buildCritiquePromptForChannel(session, channelId);
+            case REBUTTAL -> promptBuilder.buildRebuttalPromptForChannel(session, channelId);
+            case CONVERGENCE -> {
+                Optional<AiPlatform> platform = channelRegistryService.toAiPlatform(channelId);
+                if (platform.isPresent()) {
+                    yield promptBuilder.buildConvergencePrompt(session, platform.get());
+                }
+                yield promptBuilder.buildInitialPromptForChannel(session, channelId);
+            }
         };
     }
 
@@ -468,10 +496,16 @@ public class DebateOrchestrator {
      */
     private boolean checkAndSetConvergence(DebateSession session, DebateRound round) {
         List<ParticipantResponse> activeResponses = new ArrayList<>();
-        for (AiPlatform p : AiPlatform.values()) {
-            if (session.isPlatformActive(p)) {
-                ParticipantResponse resp = round.getResponse(p);
-                if (resp != null) activeResponses.add(resp);
+        for (String channelId : session.getActiveChannelIds()) {
+            ParticipantResponse resp = round.getChannelResponse(channelId);
+            if (resp != null) activeResponses.add(resp);
+        }
+        if (activeResponses.size() < 2) {
+            for (AiPlatform p : AiPlatform.values()) {
+                if (session.isPlatformActive(p)) {
+                    ParticipantResponse resp = round.getResponse(p);
+                    if (resp != null) activeResponses.add(resp);
+                }
             }
         }
 
@@ -574,14 +608,21 @@ public class DebateOrchestrator {
                 throw new IllegalArgumentException("通道整理模式必须选择整理通道");
             }
         } else {
-            boolean hasApiKey = request.getJudgeApiKey() != null && !request.getJudgeApiKey().isBlank();
-            if (!hasApiKey) {
-                throw new IllegalArgumentException("API 整理模式必须填写整理服务 API Key");
+            if (!apiSettingsService.hasConfiguredApiKey(request.getJudgeApiKey())) {
+                throw new IllegalArgumentException("API 整理模式必须填写整理服务 API Key，或在「通道配置」中保存全局 API Key");
             }
         }
 
-        String model = request.getJudgeModel() != null && !request.getJudgeModel().isBlank()
-                ? request.getJudgeModel() : "deepseek-v4-flash";
+        String model = apiSettingsService.resolveModel(request.getJudgeModel());
+        List<String> channelIds = ParticipantSelectionHelper.resolveChannelIds(request);
+        List<AiPlatform> selectedPlatforms = new ArrayList<>();
+        for (String channelId : channelIds) {
+            channelRegistryService.toAiPlatform(channelId).ifPresent(selectedPlatforms::add);
+        }
+        if (selectedPlatforms.isEmpty()) {
+            selectedPlatforms = ParticipantSelectionHelper.resolveSelectedPlatforms(request);
+        }
+
         return DebateSession.builder()
                 .sessionId(sessionId)
                 .topic(request.getTopic())
@@ -594,6 +635,10 @@ public class DebateOrchestrator {
                 .judgeChannel(request.getJudgeChannel())
                 .outputDocumentTypes(new ArrayList<>(outputTypes))
                 .generatedDocuments(new LinkedHashMap<>())
+                .selectedPlatforms(new ArrayList<>(selectedPlatforms))
+                .selectedChannelIds(new ArrayList<>(channelIds))
+                .customChannelAliases(ParticipantSelectionHelper.resolveChannelAliases(request))
+                .customParticipantAliases(ParticipantSelectionHelper.resolveCustomAliases(request))
                 .createdAt(LocalDateTime.now())
                 .updatedAt(LocalDateTime.now())
                 .build();
@@ -629,31 +674,42 @@ public class DebateOrchestrator {
     }
 
     /**
-     * 同步校验辩论前置条件：至少 2 个平台已登录，否则抛出异常。
-     * 在 REST 层启动辩论前调用，避免未登录 Profile 进入辩论流程。
+     * 同步校验辩论前置条件：用户勾选的参与方中至少 2 个已登录，否则抛出异常。
      */
-    public void assertPlatformsReadyForDebate() {
+    public void assertPlatformsReadyForDebate(DebateRequest request) {
         List<String> excluded = new ArrayList<>();
+        List<String> selected = ParticipantSelectionHelper.resolveChannelIds(request);
         int eligible = 0;
 
-        for (AiPlatform platform : AiPlatform.values()) {
-            if (!isPlatformEnabled(platform)) {
-                excluded.add(platform.name() + "(未启用)");
-                continue;
-            }
-            SelectorProvider selectors = loadSelectors(platform);
-            if (profileManager.isEligibleForDebate(platform, selectors)) {
-                eligible++;
-            } else {
-                excluded.add(platform.name() + "(未登录)");
+        for (String channelId : selected) {
+            try {
+                ChannelDefinition def = channelRegistryService.getChannel(channelId);
+                if (!def.isEnabled()) {
+                    excluded.add(def.getDisplayName() + "(未启用)");
+                    continue;
+                }
+                if (channelRegistryService.isChannelReady(def)) {
+                    eligible++;
+                } else {
+                    excluded.add(def.getDisplayName() + (def.getType() == ChannelType.API ? "(API 未配置)" : "(未登录)"));
+                }
+            } catch (IllegalArgumentException e) {
+                excluded.add(channelId + "(不存在)");
             }
         }
 
-        log.info("辩论平台预检 — 可参与: {}, 排除: {}", eligible, excluded);
+        log.info("辩论通道预检 — 勾选: {}, 可参与: {}, 排除: {}", selected.size(), eligible, excluded);
 
         if (eligible < 2) {
             throw new InsufficientPlatformsException(eligible, excluded);
         }
+    }
+
+    /**
+     * 同步校验辩论前置条件（未指定参与方时，兼容旧调用）。
+     */
+    public void assertPlatformsReadyForDebate() {
+        assertPlatformsReadyForDebate(DebateRequest.builder().build());
     }
 
     /**
@@ -664,27 +720,27 @@ public class DebateOrchestrator {
     }
 
     /**
-     * 根据缓存的登录状态排除未登录平台（预检后调用，避免重复 DOM 检测）。
+     * 根据通道注册表排除未就绪通道（预检后调用）。
      */
-    private void excludeUnloggedPlatforms(DebateSession session) {
-        log.info("🔍 排除未登录平台…");
-        for (AiPlatform platform : AiPlatform.values()) {
-            if (!isPlatformEnabled(platform)) {
-                session.markPlatformFailed(platform);
-                log.info("⛔ {} 已排除 — 平台未启用", platform.name());
-                continue;
-            }
-            if (!profileManager.isProfileReady(platform)
-                    || profileManager.getEffectiveLoginStatus(platform) != LoginStatus.LOGGED_IN) {
-                session.markPlatformFailed(platform);
-                log.warn("⛔ {} 已排除 — 未登录或 Profile 未就绪", platform.name());
+    private void excludeUnreadyChannels(DebateSession session) {
+        log.info("🔍 排除未就绪通道…");
+        for (String channelId : session.getSelectedChannelIdsOrDefault()) {
+            try {
+                ChannelDefinition def = channelRegistryService.getChannel(channelId);
+                if (!channelRegistryService.isChannelReady(def)) {
+                    session.markChannelFailed(channelId);
+                    log.warn("⛔ {} 已排除 — 未就绪", def.getDisplayName());
+                }
+            } catch (IllegalArgumentException e) {
+                session.markChannelFailed(channelId);
+                log.warn("⛔ {} 已排除 — 通道不存在", channelId);
             }
         }
-        log.info("辩论参与平台: {}/{}", session.getActivePlatformCount(), AiPlatform.values().length);
+        log.info("辩论参与通道: {}/{}", session.getActiveChannelCount(), session.getSelectedChannelIdsOrDefault().size());
 
-        if (session.getActivePlatformCount() < 2) {
-            throw new DebateFailedException("可参与平台不足（"
-                    + session.getActivePlatformCount() + "），至少需要 2 个已登录平台");
+        if (session.getActiveChannelCount() < 2) {
+            throw new DebateFailedException("可参与通道不足（"
+                    + session.getActiveChannelCount() + "），至少需要 2 个已就绪通道");
         }
     }
 
@@ -707,27 +763,57 @@ public class DebateOrchestrator {
      */
     private void initializeAdapters(DebateSession session) {
         log.info("🔧 初始化浏览器适配器…");
-        for (AiPlatform platform : AiPlatform.values()) {
-            if (!session.isPlatformActive(platform)) continue;
+        for (String channelId : session.getActiveChannelIds()) {
+            ChannelDefinition def;
+            try {
+                def = channelRegistryService.getChannel(channelId);
+            } catch (IllegalArgumentException e) {
+                continue;
+            }
+            if (def.getType() != ChannelType.BROWSER) {
+                continue;
+            }
+            Optional<AiPlatform> platformOpt = channelRegistryService.toAiPlatform(def);
+            if (platformOpt.isEmpty()) {
+                continue;
+            }
+            AiPlatform platform = platformOpt.get();
             try {
                 platformQueueManager.submit(platform, () -> {
                     initializePlatformAdapter(platform);
                     return null;
                 }).get(90, TimeUnit.SECONDS);
-                log.info("✅ {} 适配器已初始化", platform.name());
+                log.info("✅ {} 浏览器适配器已初始化", def.getDisplayName());
             } catch (Exception e) {
                 String reason = extractFailureMessage(e);
-                log.error("❌ {} 适配器初始化失败: {}", platform.name(), reason);
-                session.recordPlatformFailure(platform, 0, reason);
+                log.error("❌ {} 适配器初始化失败: {}", def.getDisplayName(), reason);
+                session.recordChannelFailure(channelId, 0, reason);
             }
         }
 
-        if (session.getActivePlatformCount() < 2) {
+        if (session.getActiveChannelCount() < 2) {
             session.setFailedAtRound(0);
             String detail = session.buildTerminalFailureDetail();
             session.markTerminalFailure(detail);
             throw new DebateFailedException(detail);
         }
+    }
+
+    /**
+     * 向指定通道发送 Prompt（API 或浏览器）。
+     */
+    private String invokeChannel(String channelId, String prompt) throws Exception {
+        ChannelDefinition def = channelRegistryService.getChannel(channelId);
+        if (def.getType() == ChannelType.API) {
+            return apiParticipantService.chat(def, prompt);
+        }
+        AiPlatform platform = channelRegistryService.toAiPlatform(def)
+                .orElseThrow(() -> new IllegalStateException("浏览器通道未关联平台: " + channelId));
+        PlatformAdapter adapter = adapters.get(platform);
+        if (adapter == null) {
+            throw new IllegalStateException(platform.name() + " 适配器未注册");
+        }
+        return invokeAdapter(adapter, platform, prompt);
     }
 
     /**

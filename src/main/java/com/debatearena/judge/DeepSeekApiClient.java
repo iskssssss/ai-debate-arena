@@ -32,9 +32,16 @@ public class DeepSeekApiClient {
     private final Semaphore apiSemaphore = new Semaphore(1);
 
     /**
-     * 调用对话 API 并返回 assistant 回复文本，失败时自动重试。
+     * 调用对话 API 并返回 assistant 回复文本，失败时自动重试（使用默认 Base URL）。
      */
     public String chat(String apiKey, String model, String systemPrompt, String userPrompt) {
+        return chat(judgeConfig.getBaseUrl(), apiKey, model, systemPrompt, userPrompt);
+    }
+
+    /**
+     * 调用对话 API 并返回 assistant 回复文本，失败时自动重试（指定 Base URL）。
+     */
+    public String chat(String baseUrl, String apiKey, String model, String systemPrompt, String userPrompt) {
         String trimmedUserPrompt = trimUserPrompt(userPrompt);
         IllegalStateException lastError = null;
 
@@ -42,7 +49,7 @@ public class DeepSeekApiClient {
             try {
                 apiSemaphore.acquire();
                 try {
-                    return doChat(apiKey, model, systemPrompt, trimmedUserPrompt);
+                    return doChat(baseUrl, apiKey, model, systemPrompt, trimmedUserPrompt);
                 } finally {
                     apiSemaphore.release();
                 }
@@ -66,13 +73,13 @@ public class DeepSeekApiClient {
     /**
      * 执行单次 HTTP 请求。
      */
-    private String doChat(String apiKey, String model, String systemPrompt, String userPrompt) {
+    private String doChat(String baseUrl, String apiKey, String model, String systemPrompt, String userPrompt) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(30));
         factory.setReadTimeout(Duration.ofSeconds(judgeConfig.getTimeoutSeconds()));
 
         RestClient client = RestClient.builder()
-                .baseUrl(judgeConfig.getBaseUrl())
+                .baseUrl(baseUrl)
                 .requestFactory(factory)
                 .build();
 

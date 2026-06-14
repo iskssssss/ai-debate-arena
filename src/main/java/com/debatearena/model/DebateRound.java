@@ -8,6 +8,7 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -34,6 +35,14 @@ public class DebateRound {
     @Builder.Default
     private Map<AiPlatform, String> prompts = new EnumMap<>(AiPlatform.class);
 
+    /** 本轮各通道发送的提示词（含自定义 API 通道）。 */
+    @Builder.Default
+    private Map<String, String> channelPrompts = new LinkedHashMap<>();
+
+    /** 本轮各通道回答（含自定义 API 通道）。 */
+    @Builder.Default
+    private Map<String, ParticipantResponse> channelResponses = new LinkedHashMap<>();
+
     /** 本轮裁判整理记录（DeepSeek API）。 */
     private JudgeRoundRecord judgeRecord;
 
@@ -52,6 +61,9 @@ public class DebateRound {
 
     public void addResponse(AiPlatform platform, ParticipantResponse response) {
         responses.put(platform, response);
+        if (response != null) {
+            channelResponses.put(platform.name().toLowerCase(), response);
+        }
     }
 
     /**
@@ -59,10 +71,31 @@ public class DebateRound {
      */
     public void addPrompt(AiPlatform platform, String prompt) {
         prompts.put(platform, prompt);
+        channelPrompts.put(platform.name().toLowerCase(), prompt);
+    }
+
+    /** 记录发往指定通道的提示词。 */
+    public void addChannelPrompt(String channelId, String prompt) {
+        channelPrompts.put(channelId, prompt);
     }
 
     public ParticipantResponse getResponse(AiPlatform platform) {
         return responses.get(platform);
+    }
+
+    /** 获取指定通道在本轮的提示词。 */
+    public String getChannelPrompt(String channelId) {
+        return channelPrompts.get(channelId);
+    }
+
+    /** 获取指定通道在本轮的回复。 */
+    public ParticipantResponse getChannelResponse(String channelId) {
+        return channelResponses.get(channelId);
+    }
+
+    /** 记录通道回复。 */
+    public void addChannelResponse(String channelId, ParticipantResponse response) {
+        channelResponses.put(channelId, response);
     }
 
     /**

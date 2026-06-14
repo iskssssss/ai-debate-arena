@@ -10,7 +10,9 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 启动新辩论的请求 DTO。
@@ -58,4 +60,22 @@ public class DebateRequest {
     /** 赛后需产出的文档类型 ID 列表（为空时使用系统默认）。 */
     @Builder.Default
     private List<String> outputDocuments = new ArrayList<>();
+
+    /**
+     * 参与研讨的平台列表（有序；为空时默认 ChatGPT、DeepSeek、Gemini 全部参与）。
+     */
+    @Builder.Default
+    private List<AiPlatform> participants = new ArrayList<>();
+
+    /**
+     * 参与研讨的通道 ID 列表（有序；为空时默认全部已启用内置通道）。
+     */
+    @Builder.Default
+    private List<String> participantChannelIds = new ArrayList<>();
+
+    /**
+     * 讨论方自定义名称，key 为通道 ID（如 chatgpt、api-xxx）或平台枚举名（兼容旧版）。
+     */
+    @Builder.Default
+    private Map<String, String> participantAliases = new LinkedHashMap<>();
 }

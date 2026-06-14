@@ -13,6 +13,8 @@ import com.debatearena.orchestrator.DebateOrchestrator;
 import com.debatearena.persistence.DebateStateStore;
 import com.debatearena.reporting.SynthesisGenerator;
 import com.debatearena.service.DebateProgressBuilder;
+import com.debatearena.service.ParticipantSelectionHelper;
+import com.debatearena.service.ThirdPartyApiSettingsService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -42,6 +44,7 @@ public class DebateController {
     private final DebateProgressBuilder progressBuilder;
     private final OutputDocumentService outputDocumentService;
     private final ApiJudgeService judgeService;
+    private final ThirdPartyApiSettingsService apiSettingsService;
 
     /**
      * 启动新辩论。
@@ -57,7 +60,7 @@ public class DebateController {
         log.info("📝 收到辩论请求 — session={}, topic={}", sessionId, request.getTopic());
 
         validateStartRequest(request);
-        orchestrator.assertPlatformsReadyForDebate();
+        orchestrator.assertPlatformsReadyForDebate(request);
 
         // 异步启动辩论（不阻塞 HTTP 响应）
         orchestrator.startDebate(request, sessionId);
@@ -116,11 +119,12 @@ public class DebateController {
                 throw new IllegalArgumentException("通道整理模式须选择整理通道");
             }
         } else {
-            if (request.getJudgeApiKey() == null || request.getJudgeApiKey().isBlank()) {
-                throw new IllegalArgumentException("API 整理模式须填写整理服务 API Key");
+            if (!apiSettingsService.hasConfiguredApiKey(request.getJudgeApiKey())) {
+                throw new IllegalArgumentException("API 整理模式须填写整理服务 API Key，或在「通道配置」中保存全局 API Key");
             }
         }
         outputDocumentService.resolveRequestedTypes(request.getOutputDocuments());
+        ParticipantSelectionHelper.validateChannelSelection(request);
     }
 
     /**
@@ -150,9 +154,9 @@ public class DebateController {
      * 组装研讨状态与进度步骤。
      */
     private DebateStatusResponse buildStatusResponse(DebateSession session) {
-        List<String> participants = session.getParticipatingPlatforms().stream()
-                .map(session::getParticipantAlias)
-                .toList();
+        List<String> participants = !session.getParticipatingChannelIds().isEmpty()
+                ? session.getParticipatingChannelIds().stream().map(session::getChannelAlias).toList()
+                : session.getParticipatingPlatforms().stream().map(session::getParticipantAlias).toList();
         return DebateStatusResponse.builder()
                 .sessionId(session.getSessionId())
                 .topic(session.getTopic())
@@ -178,9 +182,9 @@ public class DebateController {
      * 组装研讨历史列表项。
      */
     private DebateHistoryItemResponse buildHistoryItem(DebateSession session) {
-        List<String> participants = session.getParticipatingPlatforms().stream()
-                .map(session::getParticipantAlias)
-                .toList();
+        List<String> participants = !session.getParticipatingChannelIds().isEmpty()
+                ? session.getParticipatingChannelIds().stream().map(session::getChannelAlias).toList()
+                : session.getParticipatingPlatforms().stream().map(session::getParticipantAlias).toList();
         return DebateHistoryItemResponse.builder()
                 .sessionId(session.getSessionId())
                 .topic(session.getTopic())
@@ -352,9 +356,9 @@ public class DebateController {
             @PathVariable int roundNumber,
             @RequestBody(required = false) Map<String, String> body) {
         DebateSession session = loadSession(sessionId);
-        String apiKey = body != null ? body.get("judgeApiKey") : null;
+        String apiKey = apiSettingsService.resolveApiKey(body != null ? body.get("judgeApiKey") : null);
         if (apiKey == null || apiKey.isBlank()) {
-            throw new IllegalArgumentException("重试整理须填写整理服务 API Key");
+            throw new IllegalArgumentException("重试整理须填写整理服务 API Key，或在「通道配置」中保存全局 API Key");
         }
 
         JudgeRoundRecord record = judgeService.retryRoundSummary(session, roundNumber, apiKey);
@@ -366,13 +370,8 @@ public class DebateController {
         stateStore.saveSnapshot(sessionId, session.getCurrentRoundNumber(), session);
 
         Map<String, String> prompts = new LinkedHashMap<>();
-        round.getPrompts().forEach((p, text) -> prompts.put(session.getParticipantAlias(p), text));
         Map<String, String> responses = new LinkedHashMap<>();
-        round.getResponses().forEach((p, resp) -> {
-            if (resp != null && resp.getContent() != null) {
-                responses.put(session.getParticipantAlias(p), resp.getContent());
-            }
-        });
+        populateRoundDialogue(session, round, prompts, responses);
         return ResponseEntity.ok(JudgeReportResponse.RoundJudgeDetail.builder()
                 .roundNumber(round.getRoundNumber())
                 .roundType(round.getRoundType().name())
@@ -383,19 +382,37 @@ public class DebateController {
     }
 
     /**
+     * 组装单轮讨论记录（优先通道维度，兼容旧平台维度快照）。
+     */
+    private void populateRoundDialogue(DebateSession session, DebateRound round,
+                                       Map<String, String> prompts, Map<String, String> responses) {
+        if (!round.getChannelPrompts().isEmpty()) {
+            round.getChannelPrompts().forEach((channelId, text) ->
+                    prompts.put(session.getChannelAlias(channelId), text));
+            round.getChannelResponses().forEach((channelId, resp) -> {
+                if (resp != null && resp.getContent() != null) {
+                    responses.put(session.getChannelAlias(channelId), resp.getContent());
+                }
+            });
+            return;
+        }
+        round.getPrompts().forEach((p, text) -> prompts.put(session.getParticipantAlias(p), text));
+        round.getResponses().forEach((p, resp) -> {
+            if (resp != null && resp.getContent() != null) {
+                responses.put(session.getParticipantAlias(p), resp.getContent());
+            }
+        });
+    }
+
+    /**
      * 从会话快照构建裁判报告响应。
      */
     private JudgeReportResponse buildJudgeReport(DebateSession session) {
         List<JudgeReportResponse.RoundJudgeDetail> roundDetails = new ArrayList<>();
         for (DebateRound round : session.getRounds()) {
             Map<String, String> prompts = new LinkedHashMap<>();
-            round.getPrompts().forEach((p, text) -> prompts.put(session.getParticipantAlias(p), text));
             Map<String, String> responses = new LinkedHashMap<>();
-            round.getResponses().forEach((p, resp) -> {
-                if (resp != null && resp.getContent() != null) {
-                    responses.put(session.getParticipantAlias(p), resp.getContent());
-                }
-            });
+            populateRoundDialogue(session, round, prompts, responses);
             roundDetails.add(JudgeReportResponse.RoundJudgeDetail.builder()
                     .roundNumber(round.getRoundNumber())
                     .roundType(round.getRoundType().name())

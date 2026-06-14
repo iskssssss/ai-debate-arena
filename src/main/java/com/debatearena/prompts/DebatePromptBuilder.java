@@ -6,10 +6,12 @@ import com.debatearena.model.DebateRound;
 import com.debatearena.model.DebateSession;
 import com.debatearena.model.ParticipantResponse;
 import com.debatearena.model.RoundType;
+import com.debatearena.service.ChannelRegistryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 辩论 Prompt 构建器 —— 根据实际参与方动态生成需求实现方案研讨提示词，使用「讨论方甲/乙/丙」匿名代号。
@@ -22,23 +24,74 @@ public class DebatePromptBuilder {
 
     private final PromptTemplateService templateService;
     private final CompressionService compressionService;
+    private final ChannelRegistryService channelRegistryService;
 
     /**
-     * 在排除未参与平台后，为活跃讨论方分配「讨论方甲/乙/丙」代号。
+     * 为已勾选且未失败的讨论方分配代号；优先使用用户自定义名称。
      */
     public void assignParticipantAliases(DebateSession session) {
         session.getParticipatingPlatforms().clear();
         session.getParticipantAliases().clear();
+        session.getParticipatingChannelIds().clear();
+        session.getChannelAliases().clear();
+
         int index = 0;
-        for (AiPlatform platform : AiPlatform.values()) {
-            if (!session.isPlatformActive(platform)) {
+        for (String channelId : session.getSelectedChannelIdsOrDefault()) {
+            if (!session.isChannelActive(channelId)) {
                 continue;
             }
-            String alias = "讨论方" + ALIAS_SUFFIXES[Math.min(index, ALIAS_SUFFIXES.length - 1)];
-            session.getParticipatingPlatforms().add(platform);
-            session.getParticipantAliases().put(platform, alias);
+            String custom = session.getCustomChannelAliases().get(channelId);
+            if (custom == null || custom.isBlank()) {
+                custom = session.getCustomParticipantAliases().entrySet().stream()
+                        .filter(e -> channelId.equalsIgnoreCase(e.getKey().name()))
+                        .map(Map.Entry::getValue)
+                        .findFirst()
+                        .orElse(null);
+            }
+            String alias = custom != null && !custom.isBlank()
+                    ? custom.trim()
+                    : channelRegistryService.getDisplayName(channelId);
+            session.getParticipatingChannelIds().add(channelId);
+            session.getChannelAliases().put(channelId, alias);
+
+            channelRegistryService.toAiPlatform(channelId).ifPresent(platform -> {
+                session.getParticipatingPlatforms().add(platform);
+                session.getParticipantAliases().put(platform, alias);
+            });
             index++;
         }
+    }
+
+    /** 构建指定通道的初始回答 Prompt。 */
+    public String buildInitialPromptForChannel(DebateSession session, String channelId) {
+        String alias = session.getChannelAlias(channelId);
+        int count = session.getParticipatingChannelIds().size();
+        String topic = session.getTopic();
+        if (ResponseContentValidator.isCompactTopic(topic)) {
+            return templateService.renderCompactInitialPrompt(topic, alias, count);
+        }
+        return templateService.renderInitialPrompt(topic, alias, count);
+    }
+
+    /** 构建指定通道的批判轮 Prompt。 */
+    public String buildCritiquePromptForChannel(DebateSession session, String channelId) {
+        String otherSection = session.getLatestResponsesExceptChannel(channelId);
+        return templateService.renderCritiquePrompt(
+                session.getTopic(),
+                session.getChannelAlias(channelId),
+                session.getParticipatingChannelIds().size(),
+                otherSection,
+                compressionService.compressSelfResponse(session.getLatestResponseTextForChannel(channelId)),
+                "请审阅其他讨论方方案，指出问题、风险与改进建议。");
+    }
+
+    /** 构建指定通道的反驳轮 Prompt。 */
+    public String buildRebuttalPromptForChannel(DebateSession session, String channelId) {
+        return templateService.renderRebuttalPrompt(
+                session.getTopic(),
+                session.getChannelAlias(channelId),
+                compressionService.compressSelfResponse(session.getLatestResponseTextForChannel(channelId)),
+                "请综合其他讨论方在前面的审阅意见，修订并输出你的实现方案。");
     }
 
     /**

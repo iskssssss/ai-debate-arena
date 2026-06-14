@@ -1,6 +1,7 @@
 package com.debatearena.judge;
 
 import com.debatearena.model.*;
+import com.debatearena.service.ThirdPartyApiSettingsService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
@@ -22,6 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ApiJudgeService implements JudgeService {
 
     private final DeepSeekApiClient apiClient;
+    private final ThirdPartyApiSettingsService apiSettingsService;
 
     /** sessionId → API Key（内存暂存，研讨结束后清除）。 */
     private final Map<String, String> sessionApiKeys = new ConcurrentHashMap<>();
@@ -61,7 +63,9 @@ public class ApiJudgeService implements JudgeService {
         }
         try {
             String userPrompt = buildRoundUserPrompt(session, round);
-            String analysis = apiClient.chat(apiKey, session.getJudgeModel(),
+            String analysis = apiClient.chat(
+                    apiSettingsService.getEffectiveSettings().getBaseUrl(),
+                    apiKey, session.getJudgeModel(),
                     getRoundSystemPrompt(), userPrompt);
             String cleaned = DocumentContentSanitizer.sanitize(analysis);
             log.info("⚖️ 第 {} 轮整理完成 ({} 字符)", round.getRoundNumber(), cleaned.length());
@@ -78,7 +82,9 @@ public class ApiJudgeService implements JudgeService {
         if (apiKey == null) {
             throw new IllegalStateException("未配置整理服务 API Key");
         }
-        return apiClient.chat(apiKey, session.getJudgeModel(), systemPrompt, userPrompt);
+        return apiClient.chat(
+                apiSettingsService.getEffectiveSettings().getBaseUrl(),
+                apiKey, session.getJudgeModel(), systemPrompt, userPrompt);
     }
 
     /**
@@ -103,7 +109,9 @@ public class ApiJudgeService implements JudgeService {
         }
         try {
             String userPrompt = buildFinalUserPrompt(session);
-            String analysis = apiClient.chat(apiKey, session.getJudgeModel(),
+            String analysis = apiClient.chat(
+                    apiSettingsService.getEffectiveSettings().getBaseUrl(),
+                    apiKey, session.getJudgeModel(),
                     getFinalSystemPrompt(), userPrompt);
             String cleaned = DocumentContentSanitizer.sanitize(analysis);
             log.info("⚖️ 最终整理报告完成 ({} 字符)", cleaned.length());
