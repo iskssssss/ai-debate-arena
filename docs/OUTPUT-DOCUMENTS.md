@@ -1,12 +1,11 @@
 # 产出文档说明
 
-> 更新：2026-06-14
+> 更新：2026-06-15
 
-研讨结束后，整理服务根据用户勾选的文档类型，**逐项**调用 DeepSeek API 生成完整独立的 Markdown 文档。每份文档仅基于本场研讨材料客观归纳，不添加整理者意见，且可单独阅读、不相互引用。
+研讨结束后，整理服务根据用户勾选的文档类型，**逐项**调用 DeepSeek API 生成完整独立的 Markdown 文档。每份文档仅基于本场研讨材料客观归纳，不添加整理者意见，可单独阅读、不相互引用。
 
-模板目录：`src/main/resources/templates/output-documents/`
-
-生成服务：`judge/OutputDocumentService.java`
+- 模板目录：`src/main/resources/templates/output-documents/`
+- 生成服务：`judge/OutputDocumentService.java`
 
 ---
 
@@ -68,32 +67,31 @@
 | `api_data_design` vs `api_spec` | 前者侧重架构与模块交互；后者展开逐接口参数表 |
 | `implementation_plan_full` vs `implementation_plan_brief` | 完整版 vs 摘要版 |
 | `open_questions` vs `prd_acceptance` | 前者列未决问题；后者列已明确可验收条目 |
-| `/report` vs `/documents` | `/report` 兼容旧接口，优先返回完整版方案 |
+| `/report` vs `/documents` | `/report` 为兼容旧接口，优先返回完整版方案 |
 
 ---
 
 ## 生成规则
 
-1. **触发时机**：研讨状态变为 `CONVERGED` 或 `MAX_ROUNDS` 后异步执行
-2. **逐项生成**：每份文档独立一次 API 调用，完成后写入快照
-3. **状态**：`pending`（生成中）/ `ready`（可下载）/ `failed`（失败）
-4. **正文清洗**：`DocumentContentSanitizer` 去除模型寒暄语，保留纯 Markdown
-5. **输出约束**：`_output-format-rules.txt` 要求直接从 `#` 标题起笔，禁止开场白
+1. **触发时机** — 研讨状态变为 `CONVERGED` 或 `MAX_ROUNDS` 后异步执行
+2. **逐项生成** — 每份文档独立一次 API 调用，完成后写入快照
+3. **状态标记** — `pending`（排队/生成中）/ `ready`（可下载）/ `failed`（生成失败）
+4. **正文清洗** — `DocumentContentSanitizer` 去除模型寒暄语，保留纯 Markdown 正文
+5. **输出约束** — `_output-format-rules.txt` 要求直接从 `#` 标题起笔，禁止开场白
 
 ---
 
 ## API 使用
 
 ```powershell
-# 获取全部可勾选类型（含 description 说明）
+# 获取全部可勾选类型（含用途说明）
 GET /api/debates/output-document-types
 
-# 本场文档列表
+# 本场文档列表与生成状态
 GET /api/debates/{sessionId}/documents
 
-# 下载单份文档
+# 下载单份文档（Markdown）
 GET /api/debates/{sessionId}/documents/{typeId}
-Accept: text/markdown
 ```
 
 **启动时指定文档**：
@@ -114,6 +112,6 @@ Accept: text/markdown
 ## 自定义模板
 
 1. 编辑 `templates/output-documents/{type}.txt`
-2. 保持「整理原则」：仅客观摘录，禁止整理者意见
+2. 保持「整理原则」：仅客观摘录，禁止整理者添加意见
 3. 修改 `OutputDocumentType.java` 可新增类型（需同步 ID、label、description、模板路径）
 4. 重启服务后生效（模板有缓存，重启清空）

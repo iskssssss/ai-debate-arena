@@ -1,6 +1,6 @@
 # 研讨流程与提示词说明
 
-> 更新：2026-06-14
+> 更新：2026-06-15
 
 本文档说明方案研讨台的完整流程、各轮提示词目标、整理服务、收敛检测与输出物结构。
 
@@ -10,7 +10,7 @@
 
 ```mermaid
 flowchart TD
-    A[输入需求描述] --> B{至少 2 个通道已登录?}
+    A[输入需求描述] --> B{至少 2 个通道已就绪?}
     B -->|否| C[跳转通道配置]
     B -->|是| D[分配讨论方代号 甲/乙/丙]
     D --> E[第1轮: 初始方案]
@@ -28,26 +28,47 @@ flowchart TD
 
 每轮结束后：
 
-1. **收敛检测**：计算各方方案相似度，与本场阈值比较
-2. **轮次整理**（异步）：整理服务归纳本轮各方材料
-3. **快照持久化**：JSON 快照支持崩溃恢复与历史查阅
+1. **收敛检测** — 计算各方方案相似度，与本场阈值比较
+2. **轮次整理**（异步）— 整理服务归纳本轮各方材料
+3. **快照持久化** — JSON 快照支持崩溃恢复与历史查阅
 
 研讨结束后（异步）：
 
-4. **产出文档**：按勾选类型逐项生成完整 Markdown 文档
+4. **产出文档** — 按勾选类型逐项生成完整 Markdown 文档
 
 ---
 
 ## 二、Web 控制台
 
-页面结构（`static/index.html`）：
+前端基于 **Vue 3 ESM**（`static/js/`），入口为 `index.html`。
+
+### 页签结构
 
 | 页签 | 说明 |
 |------|------|
-| **新建研讨** | 默认首页；配置需求、轮数、收敛阈值、API Key、产出文档 |
-| **通道配置** | 三通道登录/检测/清除；不足 2 个时无法停留新建研讨 |
-| **研讨详情** | 进度时间线、轮次材料、产出文档预览（Markdown 渲染）与下载 |
-| **研讨历史** | 本机历次研讨记录 |
+| **新建研讨** | 默认首页；三步向导（研讨描述 → 研讨参数 → 参与讨论方） |
+| **通道配置** | 内置通道浏览器登录/检测；自定义 API 通道增删改与连通性检测；整理服务 API 配置 |
+| **研讨历史** | 左侧列表 + 右侧详情（master-detail）；含进度时间线、轮次材料、产出文档预览 |
+
+> 原独立「研讨详情」页签已合并入「研讨历史」。桌面端快捷键：`Ctrl+1` 新建研讨、`Ctrl+2` 通道配置、`Ctrl+3` 研讨历史。
+
+### 新建研讨向导
+
+| 步骤 | 内容 |
+|------|------|
+| 1. 研讨描述 | 需求描述（功能目标、范围、验收标准） |
+| 2. 研讨参数 | 最大轮数、收敛阈值、整理方式（API / 通道）、产出文档勾选 |
+| 3. 参与讨论方 | 勾选就绪通道、自定义讨论方名称；至少 2 个、至多全部就绪通道 |
+
+提交成功后自动跳转「研讨历史」并打开对应详情。
+
+### 研讨历史详情
+
+- **列表**：最近 30 条记录；进行中研讨每 30 秒静默轮询；支持按主题/任务编号搜索，回车直开 UUID
+- **详情**：嵌入 `DebateDetail` 组件，`v-show` 保活避免切页丢失状态
+- **时间线**：默认折叠，通过「研讨进度」按钮展开/收起
+- **文档预览**：Markdown 渲染 + 目录导航气泡弹窗；切换文档自动预览
+- **聊天区**：按 session 记忆滚动位置
 
 ---
 
@@ -56,26 +77,76 @@ flowchart TD
 | 规则 | 说明 |
 |------|------|
 | UI 展示 | 通道甲 = ChatGPT，通道乙 = DeepSeek，通道丙 = Gemini |
-| 研讨内 | 仅使用讨论方甲、讨论方乙、讨论方丙 |
-| 分配时机 | 排除未登录/失败平台后，按平台顺序分配 |
-| 2 人研讨 | 仅甲、乙；审阅轮只包含 1 位其他讨论方 |
-| 提示词 | 不出现厂商或模型名称 |
+| 研讨内 | 仅使用「讨论方甲」「讨论方乙」「讨论方丙」 |
+| 分配时机 | 用户勾选就绪通道；未指定时默认全部内置通道 |
+| 自定义名称 | `participantAliases` 支持按通道 ID 自定义名称 |
+| 2 人研讨 | 仅甲、乙参与；审阅轮只包含 1 位其他讨论方 |
+| 提示词 | 全程不出现厂商或模型名称 |
 
 实现类：`prompts/DebatePromptBuilder.java`
 
 ---
 
-## 四、各轮提示词
+## 四、通道配置
+
+实现类：`service/ChannelRegistryService.java`，持久化至 `~/.ai-debate-arena/channels.json`。
+
+### 内置通道
+
+内置通道不可删除，默认接入方式为浏览器。
+
+| ID | 平台 | 接入方式 | 展示名 |
+|----|------|----------|--------|
+| `chatgpt` | CHATGPT | 浏览器 | ChatGPT |
+| `deepseek` | DEEPSEEK | 浏览器 | DeepSeek |
+| `gemini` | GEMINI | 浏览器 | Gemini |
+
+操作流程：「登录」→ 在独立浏览器窗口完成认证 →「检测」确认登录态 →「清除」移除 Profile。
+
+### 自定义 API 通道
+
+- 最多 8 个，ID 格式 `api-{uuid8}`
+- 须填写名称、Base URL、API Key、模型
+- **检测连接成功**（`apiVerified = true`）后方可参与研讨
+- 修改 API 参数后验证状态自动清除，须重新检测
+
+### 就绪判定（`ready`）
+
+| 通道类型 | 就绪条件 |
+|----------|----------|
+| 浏览器 | Profile 有效 + 登录验证通过 |
+| API | Key / BaseURL / Model 齐全 + `apiVerified = true` |
+
+### 整理服务 API
+
+全局配置存于 `~/.ai-debate-arena/api-config.json`，可在「通道配置」页保存与检测。新建研讨时若未手动填写 Key，自动复用全局配置。
+
+---
+
+## 五、浏览器生命周期
+
+实现类：`browser/BrowserProcessCleaner.java`、`browser/PlaywrightManager.java`
+
+服务被强制终止时 `@PreDestroy` 可能来不及执行，导致 Chromium 残留占用 Profile。防护机制：
+
+1. **启动清理** — `ApplicationReadyEvent` 时扫描并终止命令行含 Profile 路径的残留 chrome/chromium 进程，清除 `SingletonLock` 等锁文件
+2. **JVM Shutdown Hook** — 在进程退出时尽量关闭 Playwright 资源
+3. **启动重试** — `launchPersistentContext` 检测到 Profile 占用时自动清理并重试
+4. **健康检查重试** — `ProfileController` 临时检测失败时同样触发清理
+
+---
+
+## 六、各轮提示词
 
 模板目录：`src/main/resources/templates/debate/`
 
 ### 第 1 轮 — 初始方案（`initial-prompt.st`）
 
-各讨论方独立输出完整实现方案：需求理解、架构、技术选型、接口/数据、实施计划、风险等。
+各讨论方独立输出完整实现方案，涵盖：需求理解、架构设计、技术选型、接口/数据模型、实施计划、风险识别。
 
 ### 第 2 轮 — 交叉审阅（`critique-prompt.st`）
 
-审阅其他讨论方方案：覆盖度、架构合理性、可落地性、风险盲区，输出修订建议。
+审阅其他讨论方方案，评估维度：覆盖度、架构合理性、可落地性、风险盲区。输出修订建议。
 
 ### 第 3+ 轮 — 修订回应（`rebuttal-prompt.st`）
 
@@ -87,7 +158,7 @@ flowchart TD
 
 ---
 
-## 五、收敛检测
+## 七、收敛检测
 
 实现类：`convergence/TextSimilarityConvergenceDetector.java`
 
@@ -97,8 +168,8 @@ flowchart TD
 | 分词 | 中文连续汉字二元组 + 英文单词 |
 | 加权 | TF-IDF，降低各方案共有模板词权重 |
 | 相似度 | 所有两两组合的余弦相似度 |
-| 取值 | **min(pairwise)**，防止平均掩盖分歧 |
-| 惩罚 | 中英文否定/转折词命中时扣减 |
+| 取值 | **min(pairwise)**，防止平均值掩盖分歧 |
+| 惩罚 | 中英文否定/转折词命中时扣减相似度 |
 | 判定 | `minPairwise >= session.convergenceThreshold` |
 
 阈值配置：
@@ -109,13 +180,14 @@ flowchart TD
 
 ---
 
-## 六、整理服务（必选）
+## 八、整理服务（必选）
 
 ### 配置要求
 
-- 发起研讨**必须**提供 `judgeApiKey`
-- `judgeEnabled` 默认 `true`，有 Key 时强制启用
-- Key 仅存内存（`DebateJudgeService.sessionApiKeys`），**不写入快照**
+- 发起研讨**必须**启用整理（`judgeEnabled = true`）
+- **API 整理**（`judgeMode = API`）：须提供 `judgeApiKey` 或已在通道配置页保存全局 API Key
+- **通道整理**（`judgeMode = CHANNEL`）：须指定 `judgeChannel`（已登录的浏览器平台）
+- 研讨快照**不保存** API Key
 
 ### 轮次整理（`templates/judge/round-system-prompt.txt`）
 
@@ -125,7 +197,7 @@ flowchart TD
 - 各讨论方整理（提示词意图、方案要点）
 - 材料中的共识与分歧
 
-**整理原则**：仅客观摘录归纳，禁止整理者添加意见、评价或褒贬。
+> **整理原则**：仅客观摘录归纳，禁止整理者添加意见、评价或褒贬。
 
 ### 产出文档（`templates/output-documents/*.txt`）
 
@@ -135,15 +207,15 @@ flowchart TD
 
 ---
 
-## 七、输出物
+## 九、输出物
 
 ### 1. 产出文档（主输出）
 
 | API | 说明 |
 |-----|------|
 | `GET /api/debates/output-document-types` | 全部类型及用途说明 |
-| `GET /api/debates/{id}/documents` | 本场列表与状态 |
-| `GET /api/debates/{id}/documents/{typeId}` | 下载 Markdown |
+| `GET /api/debates/{id}/documents` | 本场文档列表与生成状态 |
+| `GET /api/debates/{id}/documents/{typeId}` | 下载 Markdown 正文 |
 
 ### 2. 兼容报告
 
@@ -160,11 +232,11 @@ flowchart TD
 ### 4. 快照文件
 
 - 每轮及赛后由 `DebateStateStore` 持久化
-- 旧快照可能缺少 `outputDocumentTypes` / `generatedDocuments` 字段
+- 旧快照可能缺少 `outputDocumentTypes` / `generatedDocuments` 等新增字段
 
 ---
 
-## 八、需求描述撰写建议
+## 十、需求描述撰写建议
 
 ```
 【背景】当前系统状况或业务场景
@@ -182,7 +254,7 @@ flowchart TD
 
 ---
 
-## 九、自定义与扩展
+## 十一、自定义与扩展
 
 | 目标 | 修改位置 |
 |------|----------|
@@ -192,22 +264,33 @@ flowchart TD
 | 产出文档结构 | `templates/output-documents/*.txt` |
 | 新增产出类型 | `OutputDocumentType.java` + 新模板 |
 | 页面选择器 | `selectors/*.yml` |
+| 通道注册逻辑 | `ChannelRegistryService.java` |
+| Web 组件 | `static/js/components/*.js` |
+| 桌面菜单快捷键 | `electron/app-menu.js` |
 
 修改后需**重启服务**生效。
 
 ---
 
-## 十、相关源码索引
+## 十二、相关源码索引
 
 | 模块 | 路径 |
 |------|------|
 | 编排核心 | `orchestrator/DebateOrchestrator.java` |
 | 收敛检测 | `convergence/TextSimilarityConvergenceDetector.java` |
 | 提示词构建 | `prompts/DebatePromptBuilder.java` |
-| 轮次整理 | `judge/DebateJudgeService.java` |
-| 产出文档 | `judge/OutputDocumentService.java` |
+| 轮次整理 | `judge/ApiJudgeService.java` |
+| 产出文档生成 | `judge/OutputDocumentService.java` |
 | 正文清洗 | `judge/DocumentContentSanitizer.java` |
+| 通道注册表 | `service/ChannelRegistryService.java` |
+| 参与方选择 | `service/ParticipantSelectionHelper.java` |
+| 浏览器清理 | `browser/BrowserProcessCleaner.java` |
+| Playwright 管理 | `browser/PlaywrightManager.java` |
 | 进度展示 | `service/DebateProgressBuilder.java` |
 | 兼容报告 | `reporting/SynthesisGenerator.java` |
-| Web 控制台 | `resources/static/index.html` |
+| Web 根组件 | `static/js/App.js` |
+| 新建研讨向导 | `static/js/components/DebateForm.js` |
+| 研讨历史 | `static/js/components/HistoryPanel.js` |
+| 通道配置 | `static/js/components/ProfilesPanel.js` |
+| 研讨详情 | `static/js/components/DebateDetail.js` |
 | 桌面菜单 | `electron/app-menu.js` |
