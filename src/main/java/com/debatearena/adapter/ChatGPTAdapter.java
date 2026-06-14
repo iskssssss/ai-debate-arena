@@ -3,6 +3,7 @@ package com.debatearena.adapter;
 import com.debatearena.browser.HealthStatus;
 import com.debatearena.browser.SelectorProvider;
 import com.debatearena.model.AiPlatform;
+import com.debatearena.model.RoundType;
 import com.microsoft.playwright.Page;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -87,7 +88,27 @@ public class ChatGPTAdapter implements PlatformAdapter {
             String diff = diffText(beforeText, afterText);
             return diff.isBlank() ? extractLatestResponseFromDom() : diff;
         });
+        response = ensureValidResponse(response, prompt);
         log.info("✅ ChatGPT 响应已接收 ({} 字符)", response.length());
+        return response;
+    }
+
+    /**
+     * 校验提取结果；无效时回退到 assistant DOM 重提取，避免误抓用户消息或宿主机剪贴板污染。
+     */
+    private String ensureValidResponse(String response, String prompt) {
+        RoundType roundType = ResponseContentValidator.inferRoundType(prompt);
+        String topic = ResponseContentValidator.extractTopicFromPrompt(prompt);
+        if (ResponseContentValidator.isValid(response, prompt, topic, roundType)) {
+            return response;
+        }
+        log.warn("ChatGPT 提取结果无效（{} 字符），尝试从 assistant DOM 重提取", response.length());
+        String dom = extractLatestResponseFromDom();
+        if (ResponseContentValidator.isValid(dom, prompt, topic, roundType)) {
+            log.info("ChatGPT DOM 重提取成功 ({} 字符)", dom.length());
+            return dom;
+        }
+        log.warn("ChatGPT DOM 重提取仍无效，保留原结果供上层判定");
         return response;
     }
 

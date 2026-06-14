@@ -1,6 +1,8 @@
 package com.debatearena.orchestrator;
 
+import com.debatearena.adapter.BrowserAutomationException;
 import com.debatearena.adapter.PlatformAdapter;
+import com.debatearena.adapter.ResponseContentValidator;
 import com.debatearena.browser.LoginStatus;
 import com.debatearena.browser.PlaywrightManager;
 import com.debatearena.browser.ProfileManager;
@@ -330,6 +332,12 @@ public class DebateOrchestrator {
             try {
                 if (entry.getValue().isDone() && !entry.getValue().isCancelled()) {
                     String response = entry.getValue().get();
+                    String prompt = round.getPrompt(platform);
+                    String topic = ResponseContentValidator.extractTopicFromPrompt(prompt);
+                    if (!ResponseContentValidator.isValid(response, prompt, topic, type)) {
+                        throw new BrowserAutomationException(
+                                "回复无效：疑似误抓用户消息或内容过短（" + response.length() + " 字符）");
+                    }
                     round.addResponse(platform,
                             ParticipantResponse.of(platform, response, 0));
                 }
@@ -471,6 +479,17 @@ public class DebateOrchestrator {
 
         ConvergenceResult result = convergenceDetector.check(activeResponses);
         round.setConvergenceResult(result);
+
+        // 初始轮不因短文本回声误判收敛
+        if (round.getRoundType() == RoundType.INITIAL) {
+            boolean anyTooShort = activeResponses.stream()
+                    .anyMatch(r -> r.getContent() == null
+                            || r.getContent().length() < 400);
+            if (anyTooShort) {
+                log.warn("初始轮存在过短回复，跳过收敛判定");
+                return false;
+            }
+        }
 
         boolean converged = result.getMinPairwiseSimilarity() >= session.getConvergenceThreshold();
         if (converged) {

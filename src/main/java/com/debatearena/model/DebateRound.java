@@ -65,6 +65,13 @@ public class DebateRound {
         return responses.get(platform);
     }
 
+    /**
+     * 获取指定平台在本轮发送的提示词。
+     */
+    public String getPrompt(AiPlatform platform) {
+        return prompts.get(platform);
+    }
+
     public void addCritiques(AiPlatform from, List<Critique> critiqueList) {
         critiques.put(from, critiqueList);
     }

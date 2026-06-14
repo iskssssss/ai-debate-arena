@@ -21,7 +21,7 @@ selectors:
   response-wait-indicator: "div.ds-markdown"
   # 复制回答按钮（限定最后一条回复区域）
   copy-response: "div.ds-markdown:last-of-type ~ div div[role='button'].ds-button--icon"
-  copy-response-fallback: "div[class*='ds-message'] div[role='button'].ds-button--icon"
+  copy-response-fallback: "div.ds-markdown:last-of-type ~ div div[role='button'].ds-button--icon, div.ds-markdown:last-of-type + div div[role='button'].ds-button--icon"
   # 已登录标识
   login-indicator: "textarea[placeholder*='发送消息']"
   login-indicator-fallback: "div[class*='Sidebar']"

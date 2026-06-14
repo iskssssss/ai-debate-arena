@@ -21,7 +21,7 @@ selectors:
   response-wait-indicator: "article[data-testid^='conversation-turn-']:last-of-type button[data-testid='copy-turn-action-button']"
   # 复制回答按钮（用于剪贴板提取，限定最后一条回复）
   copy-response: "article[data-testid^='conversation-turn-']:last-of-type button[data-testid='copy-turn-action-button']"
-  copy-response-fallback: "button[aria-label='复制回复'], button[aria-label='Copy']"
+  copy-response-fallback: "article[data-testid^='conversation-turn-']:last-of-type div[data-message-author-role='assistant'] button[data-testid='copy-turn-action-button']"
   # 停止生成按钮
   stop-generating: "button[data-testid='stop-button']"
   stop-generating-fallback: "button[aria-label='Stop generating']"

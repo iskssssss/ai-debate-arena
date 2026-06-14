@@ -14,12 +14,18 @@ import java.util.List;
  * 响应剪贴板提取器 —— 通过点击「复制回答」按钮从剪贴板读取最新 AI 回复。
  * <p>
  * 比 DOM innerText 更可靠，可获取完整 Markdown 格式内容。
+ * <p>
+ * 注意：系统剪贴板为全局共享资源，宿主机操作人员手动复制可能污染读取结果。
+ * 本类通过「点击前快照 → 点击后比对 → 未变化则重试」降低误读风险；
+ * 若仍失败，调用方应回退到 DOM 提取。
  */
 @Slf4j
 public class ResponseClipboardExtractor {
 
-    private static final int COPY_CLICK_WAIT_MS = 300;
+    private static final int COPY_CLICK_WAIT_MS = 400;
     private static final int CLICK_TIMEOUT_MS = 3000;
+    /** 剪贴板未更新时的最大重试次数。 */
+    private static final int MAX_CLIPBOARD_ATTEMPTS = 3;
 
     /**
      * 为页面授予剪贴板读写权限（需在平台页面加载后调用）。
@@ -39,6 +45,9 @@ public class ResponseClipboardExtractor {
 
     /**
      * 点击最新回复的复制按钮，从剪贴板读取文本。
+     * <p>
+     * 点击前记录剪贴板快照，点击后验证内容是否发生变化；
+     * 若未变化则重试，避免读到宿主机上残留的旧复制内容。
      *
      * @param page         页面
      * @param selectors    选择器配置
@@ -52,23 +61,73 @@ public class ResponseClipboardExtractor {
             return "";
         }
 
-        if (!clickLastCopyButton(page, chain, platformName)) {
-            if (clickCopyButtonViaJs(page, platformName)) {
-                log.debug("{} 通过 JS 点击复制按钮", platformName);
-            } else {
-                return "";
+        for (int attempt = 1; attempt <= MAX_CLIPBOARD_ATTEMPTS; attempt++) {
+            String beforeClip = normalizeClipboard(readClipboard(page));
+
+            if (!clickCopyButton(page, chain, platformName)) {
+                log.debug("{} 第 {} 次未能点击复制按钮", platformName, attempt);
+                continue;
             }
+
+            sleepQuietly(COPY_CLICK_WAIT_MS);
+            String afterClip = normalizeClipboard(readClipboard(page));
+
+            if (afterClip.isBlank()) {
+                log.debug("{} 第 {} 次剪贴板为空", platformName, attempt);
+                continue;
+            }
+
+            if (isSameClipboardContent(beforeClip, afterClip)) {
+                log.warn("{} 第 {} 次复制后剪贴板未变化（{} 字符），疑似复制失败或宿主机剪贴板干扰，重试…",
+                        platformName, attempt, afterClip.length());
+                sleepQuietly(200);
+                continue;
+            }
+
+            log.debug("{} 剪贴板提取成功 ({} 字符, attempt={})", platformName, afterClip.length(), attempt);
+            return afterClip;
         }
 
-        sleepQuietly(COPY_CLICK_WAIT_MS);
-        String text = readClipboard(page);
-        if (text != null && !text.isBlank()) {
-            log.debug("{} 剪贴板提取成功 ({} 字符)", platformName, text.length());
-            return text.trim();
-        }
-
-        log.debug("{} 剪贴板为空，剪贴板提取失败", platformName);
+        log.warn("{} 剪贴板提取失败：{} 次尝试后仍无法获得点击后的新内容，将回退 DOM 提取",
+                platformName, MAX_CLIPBOARD_ATTEMPTS);
         return "";
+    }
+
+    /**
+     * 点击复制按钮（选择器链优先，JS 兜底）。
+     */
+    private boolean clickCopyButton(Page page, List<String> chain, String platformName) {
+        if (clickLastCopyButton(page, chain, platformName)) {
+            return true;
+        }
+        if (clickCopyButtonViaJs(page, platformName)) {
+            log.debug("{} 通过 JS 点击复制按钮", platformName);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 判断两次剪贴板内容是否实质相同（用于检测复制是否生效）。
+     */
+    private boolean isSameClipboardContent(String before, String after) {
+        if (before.isBlank() && after.isBlank()) {
+            return true;
+        }
+        if (before.isBlank()) {
+            return false;
+        }
+        return before.equals(after);
+    }
+
+    /**
+     * 归一化剪贴板文本便于比较。
+     */
+    private String normalizeClipboard(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text.replaceAll("\\s+", " ").trim();
     }
 
     /**
@@ -141,18 +200,18 @@ public class ResponseClipboardExtractor {
     }
 
     /**
-     * JS 兜底：从最后一条 ds-markdown / assistant 消息向上查找复制按钮并点击。
+     * JS 兜底：从最后一条 assistant / ds-markdown 消息向上查找复制按钮并点击。
      */
     private boolean clickCopyButtonViaJs(Page page, String platformName) {
         try {
             Object clicked = page.evaluate(
                     "() => { " +
-                    "  const md = document.querySelectorAll('div.ds-markdown'); " +
-                    "  const anchor = md.length ? md[md.length - 1] " +
-                    "    : document.querySelector(\"article[data-testid^='conversation-turn-']:last-of-type\"); " +
+                    "  const assistants = document.querySelectorAll(\"div[data-message-author-role='assistant']\"); " +
+                    "  const anchor = assistants.length ? assistants[assistants.length - 1] " +
+                    "    : document.querySelectorAll('div.ds-markdown')[document.querySelectorAll('div.ds-markdown').length - 1]; " +
                     "  if (!anchor) return false; " +
                     "  let node = anchor; " +
-                    "  for (let i = 0; i < 6 && node; i++) { " +
+                    "  for (let i = 0; i < 8 && node; i++) { " +
                     "    const btn = node.querySelector(" +
                     "      \"button[data-testid='copy-turn-action-button'], " +
                     "       div[role='button'].ds-button--icon\"); " +
