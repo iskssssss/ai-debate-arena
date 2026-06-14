@@ -6,20 +6,26 @@ export const IS_DESKTOP = new URLSearchParams(window.location.search).get('deskt
     || Boolean(window.desktopClient?.isDesktop);
 export const JUDGE_KEY_STORAGE = 'debate_judge_api_key';
 export const THRESHOLD_STORAGE = 'debate_convergence_threshold_pct';
-export const CHANNEL_LABELS = { gemini: '通道丙', chatgpt: '通道甲', deepseek: '通道乙' };
-/** 通道对应的讨论方代称（用于头像展示）。 */
-export const CHANNEL_AVATARS = { chatgpt: '甲', deepseek: '乙', gemini: '丙' };
+export const PARTICIPANT_NAMES_STORAGE = 'debate_participant_names';
+/** 通道对应的头像字符。 */
+export const CHANNEL_AVATARS = { chatgpt: 'C', deepseek: 'D', gemini: 'G' };
 export const DEFAULT_OUTPUT_DOCS = ['implementation_plan_full', 'prd_acceptance', 'mvp_plan', 'test_plan', 'disagreement_tradeoff'];
 export const STATE_LABELS = { pending: '等待', active: '进行中', done: '完成', error: '异常' };
 export const DOC_STATUS_LABELS = { pending: '生成中', ready: '可下载', failed: '失败' };
 export const ROUND_TYPE_LABELS = {
     INITIAL: '初始方案', CRITIQUE: '交叉审阅', REBUTTAL: '修订回应', CONVERGENCE: '收敛确认'
 };
+/** 各轮次类型在流程说明中的副标题。 */
+export const ROUND_TYPE_DETAILS = {
+    INITIAL: '各方独立提交实现方案',
+    CRITIQUE: '审阅其他方方案并指出问题',
+    REBUTTAL: '根据审阅意见修订方案',
+    CONVERGENCE: '确认共识与分歧'
+};
 
 /** 各页签的标题与描述（用于页头动态更新）。 */
 export const PAGE_META = {
     debate: { title: '新建研讨', desc: '填写需求描述与研讨参数，发起多轮结构化研讨' },
-    profiles: { title: '通道配置', desc: '管理 AI 讨论方登录状态，至少登录 2 个通道方可发起研讨' },
-    debates: { title: '研讨详情', desc: '按任务编号查看研讨进度、轮次材料与产出文档' },
-    history: { title: '研讨历史', desc: '本机历次研讨记录，按最近更新时间排列' }
+    profiles: { title: '通道配置', desc: '管理讨论方通道：内置服务商浏览器登录、添加自定义 API 通道' },
+    history: { title: '研讨历史', desc: '查看本机历次研讨记录，点击记录查看进度、讨论与产出文档' }
 };
