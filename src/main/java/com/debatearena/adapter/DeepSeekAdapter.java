@@ -113,8 +113,9 @@ public class DeepSeekAdapter implements PlatformAdapter {
     private String ensureValidResponse(String response, String prompt) {
         RoundType roundType = ResponseContentValidator.inferRoundType(prompt);
         String topic = ResponseContentValidator.extractTopicFromPrompt(prompt);
-        if (ResponseContentValidator.isValid(response, prompt, topic, roundType)) {
-            return response;
+        String cleaned = ResponseContentValidator.sanitizePlatformUiArtifacts(response);
+        if (ResponseContentValidator.isValid(cleaned, prompt, topic, roundType)) {
+            return cleaned;
         }
         log.warn("DeepSeek 提取结果无效（{} 字符），尝试从 assistant DOM 重提取", response.length());
         String dom = extractLatestResponseFromDom();
@@ -123,7 +124,7 @@ public class DeepSeekAdapter implements PlatformAdapter {
             return dom;
         }
         log.warn("DeepSeek DOM 重提取仍无效，保留原结果供上层判定");
-        return response;
+        return cleaned;
     }
 
     /**
@@ -201,7 +202,8 @@ public class DeepSeekAdapter implements PlatformAdapter {
             var mdElements = page.locator("div.ds-markdown");
             int mdCount = mdElements.count();
             if (mdCount > 0) {
-                String text = mdElements.nth(mdCount - 1).innerText();
+                String text = ResponseContentValidator.sanitizePlatformUiArtifacts(
+                        mdElements.nth(mdCount - 1).innerText());
                 if (isValidResponse(text)) return text;
             }
 
@@ -211,7 +213,8 @@ public class DeepSeekAdapter implements PlatformAdapter {
                 var elements = page.locator(selector);
                 int count = elements.count();
                 if (count > 0) {
-                    String text = elements.nth(count - 1).innerText();
+                    String text = ResponseContentValidator.sanitizePlatformUiArtifacts(
+                            elements.nth(count - 1).innerText());
                     if (isValidResponse(text)) return text;
                 }
             }
@@ -220,7 +223,8 @@ public class DeepSeekAdapter implements PlatformAdapter {
             var bubbles = page.locator("div[class*='Message'], div[class*='message'], div[class*='bubble']");
             int bubbleCount = bubbles.count();
             if (bubbleCount > 0) {
-                String text = bubbles.nth(bubbleCount - 1).innerText();
+                String text = ResponseContentValidator.sanitizePlatformUiArtifacts(
+                        bubbles.nth(bubbleCount - 1).innerText());
                 if (isValidResponse(text)) return text;
             }
 
@@ -228,7 +232,8 @@ public class DeepSeekAdapter implements PlatformAdapter {
             var mdOnly = page.locator("div.ds-markdown");
             int mdOnlyCount = mdOnly.count();
             if (mdOnlyCount > 0) {
-                String text = mdOnly.nth(mdOnlyCount - 1).innerText();
+                String text = ResponseContentValidator.sanitizePlatformUiArtifacts(
+                        mdOnly.nth(mdOnlyCount - 1).innerText());
                 if (isValidResponse(text)) return text;
             }
 

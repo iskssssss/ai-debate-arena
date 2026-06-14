@@ -256,6 +256,11 @@ public class ResponseClipboardExtractor {
             return null;
         }
 
+        // 禁止无范围限定的 DeepSeek 图标按钮选择器，避免点到代码块内「下载」
+        if (selector != null && "div[role='button'].ds-button--icon".equals(selector.trim())) {
+            return null;
+        }
+
         Locator buttons = page.locator(selector);
         int count = buttons.count();
         if (count == 0) return null;
@@ -266,7 +271,8 @@ public class ResponseClipboardExtractor {
     }
 
     /**
-     * 在最后一条 DeepSeek ds-markdown 消息附近查找复制按钮。
+     * 在最后一条 DeepSeek ds-markdown 消息的操作栏查找「复制回答」按钮。
+     * 须排除 markdown 内部代码块工具栏的「复制/下载」按钮，避免误触发文件下载。
      */
     private Locator resolveCopyButtonInLastDeepSeek(Page page) {
         try {
@@ -276,20 +282,112 @@ public class ResponseClipboardExtractor {
                 return null;
             }
             Locator lastMd = markdowns.nth(count - 1);
-            Locator siblingBtn = lastMd.locator(
-                    "xpath=following-sibling::*//div[@role='button' and contains(@class,'ds-button--icon')]");
-            if (siblingBtn.count() > 0) {
-                return siblingBtn.last();
+
+            Locator followingBtns = lastMd.locator(
+                    "xpath=following-sibling::*//div[@role='button' and contains(@class,'ds-button--icon')]"
+                            + "[not(ancestor::pre) and not(ancestor::code)]");
+            Locator picked = pickDeepSeekMessageCopyButton(followingBtns, lastMd);
+            if (picked != null) {
+                return picked;
             }
-            Locator parentBtn = lastMd.locator(
-                    "xpath=ancestor::*[1]//div[@role='button' and contains(@class,'ds-button--icon')]");
-            if (parentBtn.count() > 0) {
-                return parentBtn.last();
+
+            for (int level = 1; level <= 6; level++) {
+                Locator ancestorBtns = lastMd.locator(
+                        "xpath=ancestor::*[" + level + "]//div[@role='button' and contains(@class,'ds-button--icon')]"
+                                + "[not(ancestor::pre) and not(ancestor::code)]");
+                picked = pickDeepSeekMessageCopyButton(ancestorBtns, lastMd);
+                if (picked != null) {
+                    return picked;
+                }
             }
         } catch (Exception ignored) {
             // 回退到通用选择器解析
         }
         return null;
+    }
+
+    /**
+     * 从候选按钮中选取消息级复制按钮，排除 markdown 内部与「下载」类按钮。
+     *
+     * @param buttons 候选按钮集合
+     * @param lastMd  最后一条 ds-markdown 容器
+     * @return 可点击的复制按钮，无匹配时返回 null
+     */
+    private Locator pickDeepSeekMessageCopyButton(Locator buttons, Locator lastMd) {
+        int count = buttons.count();
+        if (count == 0) {
+            return null;
+        }
+        Locator fallback = null;
+        for (int i = count - 1; i >= 0; i--) {
+            Locator btn = buttons.nth(i);
+            if (isDeepSeekCodeBlockToolbarButton(btn, lastMd)) {
+                continue;
+            }
+            String label = readDeepSeekButtonLabel(btn);
+            if (isDeepSeekDownloadButton(label)) {
+                continue;
+            }
+            if (isDeepSeekCopyButton(label)) {
+                return btn;
+            }
+            if (fallback == null) {
+                fallback = btn;
+            }
+        }
+        return fallback;
+    }
+
+    /**
+     * 判断按钮是否位于最后一条 markdown 内部（代码块工具栏）。
+     */
+    private boolean isDeepSeekCodeBlockToolbarButton(Locator button, Locator lastMd) {
+        try {
+            Object inside = button.evaluate(
+                    "(btn, md) => md && md.contains(btn)",
+                    lastMd.elementHandle());
+            return Boolean.TRUE.equals(inside);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * 读取 DeepSeek 操作按钮的可识别标签（aria-label 或可见文本）。
+     */
+    private String readDeepSeekButtonLabel(Locator button) {
+        try {
+            String aria = button.getAttribute("aria-label");
+            if (aria != null && !aria.isBlank()) {
+                return aria.trim();
+            }
+            String text = button.innerText();
+            return text != null ? text.trim() : "";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * 判断按钮标签是否表示「下载」操作。
+     */
+    private boolean isDeepSeekDownloadButton(String label) {
+        if (label == null || label.isBlank()) {
+            return false;
+        }
+        String lower = label.toLowerCase();
+        return label.contains("下载") || lower.contains("download");
+    }
+
+    /**
+     * 判断按钮标签是否表示「复制」操作。
+     */
+    private boolean isDeepSeekCopyButton(String label) {
+        if (label == null || label.isBlank()) {
+            return false;
+        }
+        String lower = label.toLowerCase();
+        return label.contains("复制") || lower.contains("copy");
     }
 
     /**
@@ -418,15 +516,49 @@ public class ResponseClipboardExtractor {
                     "  } " +
                     "  const ds = document.querySelectorAll('div.ds-markdown'); " +
                     "  const dsLast = ds.length ? ds[ds.length - 1] : null; " +
+                    "  const isDeepSeekMsgCopyBtn = (btn, md) => { " +
+                    "    if (!btn || !md) return false; " +
+                    "    if (md.contains(btn)) return false; " +
+                    "    if (btn.closest('pre,code')) return false; " +
+                    "    const label = (btn.getAttribute('aria-label') || btn.innerText || '').trim(); " +
+                    "    const lower = label.toLowerCase(); " +
+                    "    if (label.includes('下载') || lower.includes('download')) return false; " +
+                    "    if (label.includes('复制') || lower.includes('copy')) return true; " +
+                    "    return !btn.closest('div.ds-markdown'); " +
+                    "  }; " +
+                    "  const findDeepSeekCopyBtn = (md) => { " +
+                    "    if (!md) return null; " +
+                    "    let sib = md.nextElementSibling; " +
+                    "    while (sib) { " +
+                    "      const btns = sib.querySelectorAll(\"div[role='button'].ds-button--icon\"); " +
+                    "      for (let i = btns.length - 1; i >= 0; i--) { " +
+                    "        if (isDeepSeekMsgCopyBtn(btns[i], md)) return btns[i]; " +
+                    "      } " +
+                    "      sib = sib.nextElementSibling; " +
+                    "    } " +
+                    "    let node = md.parentElement; " +
+                    "    for (let depth = 0; depth < 6 && node; depth++) { " +
+                    "      const btns = node.querySelectorAll(\"div[role='button'].ds-button--icon\"); " +
+                    "      for (let i = btns.length - 1; i >= 0; i--) { " +
+                    "        if (isDeepSeekMsgCopyBtn(btns[i], md)) return btns[i]; " +
+                    "      } " +
+                    "      node = node.parentElement; " +
+                    "    } " +
+                    "    return null; " +
+                    "  }; " +
                     "  const assistants = document.querySelectorAll(\"div[data-message-author-role='assistant']\"); " +
+                    "  if (dsLast) { " +
+                    "    dsLast.scrollIntoView({ block: 'center', behavior: 'instant' }); " +
+                    "    const deepSeekBtn = findDeepSeekCopyBtn(dsLast); " +
+                    "    if (deepSeekBtn) { deepSeekBtn.click(); return true; } " +
+                    "  } " +
                     "  const anchor = dsLast || (assistants.length ? assistants[assistants.length - 1] : null); " +
                     "  if (!anchor) return false; " +
                     "  anchor.scrollIntoView({ block: 'center', behavior: 'instant' }); " +
                     "  let node = anchor; " +
                     "  for (let i = 0; i < 10 && node; i++) { " +
                     "    const btn = node.querySelector(" +
-                    "      \"button[data-testid='copy-turn-action-button'], " +
-                    "       div[role='button'].ds-button--icon\"); " +
+                    "      \"button[data-testid='copy-turn-action-button']\"); " +
                     "    if (btn) { btn.click(); return true; } " +
                     "    node = node.parentElement; " +
                     "  } " +

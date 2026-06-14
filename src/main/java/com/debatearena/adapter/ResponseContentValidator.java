@@ -31,8 +31,27 @@ public final class ResponseContentValidator {
         result = result.replaceFirst(
                 "(?is)^(?:Gemini|ChatGPT|DeepSeek|Bard)\\s*(?:说|said)[:：\\s]*\\n?", "");
         result = result.replaceFirst("(?m)^你说\\s*$", "");
-        result = result.replaceFirst("(?m)^(?:复制|Copy|下载|Download)\\s*$", "");
+        result = stripDeepSeekCodeBlockToolbarLines(result);
         return result.strip();
+    }
+
+    /**
+     * 去除 DeepSeek DOM 提取时混入的代码块工具栏行（复制/下载）。
+     *
+     * @param content 原始文本
+     * @return 清洗后文本
+     */
+    public static String stripDeepSeekCodeBlockToolbarLines(String content) {
+        if (content == null || content.isBlank()) {
+            return content == null ? "" : content;
+        }
+        String result = content;
+        result = result.replaceAll("(?m)^(?:复制|Copy|下载|Download)\\s*$", "");
+        result = result.replaceAll(
+                "(?m)^(sql|java|python|javascript|typescript|json|yaml|yml|bash|shell|go|rust|kotlin|xml|html|css)\\s*\\n(?:复制\\s*\\n)?下载\\s*\\n",
+                "$1\n");
+        result = result.replaceAll("(?m)^(复制\\s*\\n)+下载\\s*\\n", "");
+        return result;
     }
 
     /**
@@ -67,7 +86,41 @@ public final class ResponseContentValidator {
                 return false;
             }
         }
+        // 审阅轮误交完整初始方案（无审阅结构）应判为无效
+        if (roundType == RoundType.CRITIQUE && looksLikeMisplacedInitialPlan(normalized)) {
+            return false;
+        }
         return true;
+    }
+
+    /**
+     * 判断非初始轮是否误提交了完整初始方案（缺少审阅结构）。
+     *
+     * @param normalizedContent 归一化后的回复正文
+     * @return true 表示疑似答错题
+     */
+    public static boolean looksLikeMisplacedInitialPlan(String normalizedContent) {
+        if (normalizedContent == null || normalizedContent.isBlank()) {
+            return false;
+        }
+        return hasInitialStructure(normalizedContent) && !hasCritiqueStructure(normalizedContent);
+    }
+
+    /**
+     * 判断回复是否包含审阅轮应有的结构痕迹。
+     *
+     * @param content 回复正文
+     * @return true 表示具备审阅结构
+     */
+    public static boolean hasCritiqueStructure(String content) {
+        if (content == null || content.isBlank()) {
+            return false;
+        }
+        return content.contains("审阅")
+                || content.contains("对 讨论方")
+                || content.contains("方案的审阅")
+                || content.contains("需求覆盖度")
+                || content.contains("交叉吸收");
     }
 
     /**

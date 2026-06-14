@@ -238,6 +238,8 @@ public class DebateProgressBuilder {
                     session.getConvergenceThreshold() * 100);
             if (c.isConverged()) {
                 detail += "，已收敛";
+            } else if (last.getRoundType() == RoundType.CRITIQUE) {
+                detail += "，审阅轮结构差异大属正常";
             }
         }
 
