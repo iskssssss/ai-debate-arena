@@ -95,13 +95,8 @@ function buildAppMenu(mainWindow) {
           click: () => sendNavigate(mainWindow, 'profiles')
         },
         {
-          label: '研讨详情',
-          accelerator: 'CmdOrCtrl+3',
-          click: () => sendNavigate(mainWindow, 'debates')
-        },
-        {
           label: '研讨历史',
-          accelerator: 'CmdOrCtrl+4',
+          accelerator: 'CmdOrCtrl+3',
           click: () => sendNavigate(mainWindow, 'history')
         }
       ]

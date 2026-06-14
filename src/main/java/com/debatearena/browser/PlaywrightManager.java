@@ -3,6 +3,7 @@ package com.debatearena.browser;
 import com.debatearena.config.BrowserConfig;
 import com.debatearena.model.AiPlatform;
 import com.microsoft.playwright.*;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class PlaywrightManager {
 
     private final BrowserConfig config;
+    private final BrowserProcessCleaner browserProcessCleaner;
 
     /** 每个平台独立的 Playwright 驱动。 */
     private final Map<AiPlatform, Playwright> playwrights = new EnumMap<>(AiPlatform.class);
@@ -35,6 +37,23 @@ public class PlaywrightManager {
 
     /** 每个研讨会话对应一套独立的整理通道浏览器资源（与讨论方隔离）。 */
     private final Map<String, JudgeBrowserResources> judgeResources = new ConcurrentHashMap<>();
+
+    /** 防止重复关闭。 */
+    private volatile boolean destroyed = false;
+
+    /**
+     * 注册 JVM 关闭钩子，确保强制退出时尽量释放浏览器资源。
+     */
+    @PostConstruct
+    public void registerShutdownHook() {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                destroy();
+            } catch (Exception e) {
+                log.warn("Shutdown hook 关闭浏览器失败: {}", e.getMessage());
+            }
+        }, "playwright-shutdown-hook"));
+    }
 
     /**
      * 获取指定平台的 Playwright 实例（懒创建）。
@@ -54,15 +73,7 @@ public class PlaywrightManager {
             log.warn("平台 {} 的 BrowserContext 已存在，先关闭旧的", platform.name());
             closeContext(platform);
         }
-
-        BrowserType.LaunchPersistentContextOptions options = buildLaunchOptions(config.isHeadless());
-        if ("chrome".equals(config.getChannel())) {
-            options.setChannel("chrome");
-        }
-
-        BrowserContext context = getPlaywright(platform).chromium()
-                .launchPersistentContext(userDataDir, options);
-
+        BrowserContext context = launchPersistentContextInternal(platform, userDataDir, config.isHeadless());
         contexts.put(platform, context);
         log.info("✅ {} BrowserContext 已启动 — headless={}, profileDir={}",
                 platform.name(), config.isHeadless(), userDataDir);
@@ -73,18 +84,37 @@ public class PlaywrightManager {
      * 为交互式手动登录启动可见浏览器（调用方负责关闭返回的 Context）。
      */
     public synchronized BrowserContext launchPersistentContextForSetup(AiPlatform platform, Path userDataDir) {
-        log.info("🖥️ 为 {} 启动交互式登录浏览器...", platform.name());
+        log.info("🖥️ 为 {} 启动交互式/检测用浏览器...", platform.name());
+        BrowserContext context = launchPersistentContextInternal(platform, userDataDir, false);
+        log.info("✅ {} 检测/登录浏览器已打开 — profileDir={}", platform.name(), userDataDir);
+        return context;
+    }
 
-        BrowserType.LaunchPersistentContextOptions options = buildLaunchOptions(false);
+    /**
+     * 启动持久化 BrowserContext；若 Profile 被占用则清理残留进程后重试一次。
+     */
+    private BrowserContext launchPersistentContextInternal(AiPlatform platform, Path userDataDir, boolean headless) {
+        try {
+            return doLaunchPersistentContext(platform, userDataDir, headless);
+        } catch (Exception first) {
+            if (!browserProcessCleaner.isProfileInUseError(first)) {
+                throw first;
+            }
+            log.warn("平台 {} Profile 被占用，清理残留浏览器后重试: {}", platform.name(), first.getMessage());
+            browserProcessCleaner.cleanupOrphanedBrowsers("launch-retry-" + platform.name());
+            return doLaunchPersistentContext(platform, userDataDir, headless);
+        }
+    }
+
+    /**
+     * 实际调用 Playwright 启动持久化上下文。
+     */
+    private BrowserContext doLaunchPersistentContext(AiPlatform platform, Path userDataDir, boolean headless) {
+        BrowserType.LaunchPersistentContextOptions options = buildLaunchOptions(headless);
         if ("chrome".equals(config.getChannel())) {
             options.setChannel("chrome");
         }
-
-        BrowserContext context = getPlaywright(platform).chromium()
-                .launchPersistentContext(userDataDir, options);
-
-        log.info("✅ {} 交互式浏览器已打开 — profileDir={}", platform.name(), userDataDir);
-        return context;
+        return getPlaywright(platform).chromium().launchPersistentContext(userDataDir, options);
     }
 
     /**
@@ -154,13 +184,29 @@ public class PlaywrightManager {
                     platform.name(), sessionId);
             closeJudgeResources(sessionId);
         }
+        try {
+            return doLaunchJudgePersistentContext(sessionId, platform, userDataDir);
+        } catch (Exception e) {
+            if (!browserProcessCleaner.isProfileInUseError(e)) {
+                throw e;
+            }
+            log.warn("整理通道 Profile 被占用，清理后重试 — session={}: {}", sessionId, e.getMessage());
+            browserProcessCleaner.cleanupOrphanedBrowsers("judge-retry-" + sessionId);
+            return doLaunchJudgePersistentContext(sessionId, platform, userDataDir);
+        }
+    }
 
+    /**
+     * 实际启动整理通道独立 BrowserContext。
+     */
+    private BrowserContext doLaunchJudgePersistentContext(String sessionId,
+                                                           AiPlatform platform,
+                                                           Path userDataDir) {
         Playwright playwright = Playwright.create();
         BrowserType.LaunchPersistentContextOptions options = buildLaunchOptions(config.isHeadless());
         if ("chrome".equals(config.getChannel())) {
             options.setChannel("chrome");
         }
-
         BrowserContext context = playwright.chromium().launchPersistentContext(userDataDir, options);
         judgeResources.put(sessionId, new JudgeBrowserResources(platform, playwright, context));
         log.info("✅ 整理通道 {} 独立 BrowserContext 已启动 — session={}, profileDir={}",
@@ -200,6 +246,9 @@ public class PlaywrightManager {
     private record JudgeBrowserResources(AiPlatform platform, Playwright playwright, BrowserContext context) {
     }
 
+    /**
+     * 关闭所有讨论方 BrowserContext。
+     */
     public synchronized void closeAllContexts() {
         for (AiPlatform platform : AiPlatform.values()) {
             closeContext(platform);
@@ -210,8 +259,15 @@ public class PlaywrightManager {
         return contexts.size();
     }
 
+    /**
+     * 关闭全部 Playwright 浏览器资源（Spring 销毁与 JVM 退出时调用）。
+     */
     @PreDestroy
     public void destroy() {
+        if (destroyed) {
+            return;
+        }
+        destroyed = true;
         log.info("🔒 关闭所有浏览器资源...");
         for (String sessionId : judgeResources.keySet().toArray(new String[0])) {
             closeJudgeResources(sessionId);
