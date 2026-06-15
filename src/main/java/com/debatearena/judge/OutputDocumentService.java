@@ -2,6 +2,7 @@ package com.debatearena.judge;
 
 import com.debatearena.model.*;
 import com.debatearena.persistence.DebateStateStore;
+import com.debatearena.service.DebateMaterialBuilder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
@@ -23,6 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class OutputDocumentService {
 
     private final DebateStateStore stateStore;
+    private final DebateMaterialBuilder materialBuilder;
 
     private final Map<String, String> templateCache = new ConcurrentHashMap<>();
 
@@ -110,10 +112,8 @@ public class OutputDocumentService {
         if (session.getStatus() != DebateStatus.CONVERGED) {
             sb.append("【重要】本场研讨未收敛，禁止写「已收敛」「最终状态已收敛」等表述。\n");
         }
-        sb.append("参与讨论方: ");
-        session.getParticipatingPlatforms().forEach(p ->
-                sb.append(session.getParticipantAlias(p)).append(" "));
-        sb.append("\n\n");
+        materialBuilder.appendParticipantLabelsLine(sb, session);
+        sb.append("\n");
 
         for (DebateRound round : session.getRounds()) {
             sb.append("\n######## 第 ").append(round.getRoundNumber())
@@ -132,21 +132,7 @@ public class OutputDocumentService {
                         .append("\n");
             }
 
-            for (AiPlatform platform : session.getParticipatingPlatforms()) {
-                String alias = session.getParticipantAlias(platform);
-                String prompt = round.getPrompts().get(platform);
-                ParticipantResponse response = round.getResponse(platform);
-                if (prompt == null && response == null) {
-                    continue;
-                }
-                sb.append("\n--- ").append(alias).append(" ---\n");
-                if (prompt != null) {
-                    sb.append("[发送的提示词]\n").append(truncate(prompt, 8000)).append("\n\n");
-                }
-                if (response != null && response.getContent() != null) {
-                    sb.append("[收到的回答]\n").append(truncate(response.getContent(), 12000)).append("\n");
-                }
-            }
+            materialBuilder.appendRoundMaterials(sb, session, round, 8000, 12000);
         }
         return sb.toString();
     }

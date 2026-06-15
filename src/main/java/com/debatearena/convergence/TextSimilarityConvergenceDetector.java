@@ -84,7 +84,7 @@ public class TextSimilarityConvergenceDetector implements ConvergenceDetector {
                         responses.get(i).getContent(), responses.get(j).getContent());
                 double adjustedSim = Math.max(0.0, rawSim - penalty);
 
-                String pairKey = responses.get(i).getPlatform().name() + "-" + responses.get(j).getPlatform().name();
+                String pairKey = responseLabel(responses.get(i)) + "-" + responseLabel(responses.get(j));
                 pairwiseScores.put(pairKey, adjustedSim);
                 similarities.add(adjustedSim);
 
@@ -274,5 +274,18 @@ public class TextSimilarityConvergenceDetector implements ConvergenceDetector {
 
     private String format4(double value) {
         return String.format(Locale.ROOT, "%.4f", value);
+    }
+
+    /**
+     * 生成参与方标识：内置平台用枚举名，自定义 API 通道用 channelId。
+     */
+    private String responseLabel(ParticipantResponse response) {
+        if (response.getPlatform() != null) {
+            return response.getPlatform().name();
+        }
+        if (response.getChannelId() != null && !response.getChannelId().isBlank()) {
+            return response.getChannelId();
+        }
+        return "unknown";
     }
 }

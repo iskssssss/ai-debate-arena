@@ -9,6 +9,7 @@ import com.debatearena.config.AiPlatformProperties;
 import com.debatearena.config.DebateConfig;
 import com.debatearena.model.*;
 import com.debatearena.orchestrator.PlatformQueueManager;
+import com.debatearena.service.DebateMaterialBuilder;
 import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.Page;
 import lombok.RequiredArgsConstructor;
@@ -39,6 +40,7 @@ public class ChannelJudgeService implements JudgeService {
     private final PlatformQueueManager platformQueueManager;
     private final AiPlatformProperties platformProperties;
     private final DebateConfig debateConfig;
+    private final DebateMaterialBuilder materialBuilder;
 
     /** sessionId → JudgePageContext（每会话独立的浏览器页面与适配器）。 */
     private final Map<String, JudgePageContext> sessionContexts = new ConcurrentHashMap<>();
@@ -216,7 +218,7 @@ public class ChannelJudgeService implements JudgeService {
         sb.append("=== 轮次信息 ===\n");
         sb.append("第 ").append(round.getRoundNumber()).append(" 轮 / 类型: ")
                 .append(round.getRoundType()).append("\n");
-        sb.append("参与讨论方: ").append(session.getParticipatingPlatforms().size()).append(" 人\n\n");
+        sb.append("参与讨论方: ").append(materialBuilder.countParticipants(session)).append(" 人\n\n");
 
         if (round.getConvergenceResult() != null) {
             ConvergenceResult c = round.getConvergenceResult();
@@ -226,20 +228,7 @@ public class ChannelJudgeService implements JudgeService {
             sb.append(", converged=").append(c.isConverged()).append("\n\n");
         }
 
-        sb.append("=== 各讨论方材料 ===\n");
-        for (AiPlatform platform : session.getActivePlatforms()) {
-            String prompt = round.getPrompts().get(platform);
-            ParticipantResponse response = round.getResponse(platform);
-            if (prompt == null && response == null) continue;
-
-            sb.append("\n--- ").append(session.getParticipantAlias(platform)).append(" ---\n");
-            if (prompt != null) {
-                sb.append("[发送的提示词]\n").append(truncate(prompt, 6000)).append("\n\n");
-            }
-            if (response != null && response.getContent() != null) {
-                sb.append("[收到的回答]\n").append(truncate(response.getContent(), 6000)).append("\n");
-            }
-        }
+        materialBuilder.appendRoundMaterials(sb, session, round, 6000, 6000);
         return sb.toString();
     }
 
@@ -259,11 +248,11 @@ public class ChannelJudgeService implements JudgeService {
                         .append("\n");
             }
 
-            for (AiPlatform platform : session.getActivePlatforms()) {
-                ParticipantResponse resp = round.getResponse(platform);
-                if (resp != null && resp.getContent() != null) {
-                    sb.append("\n[").append(session.getParticipantAlias(platform)).append(" 回答摘要]\n")
-                            .append(truncate(resp.getContent(), 2000)).append("\n");
+            for (DebateMaterialBuilder.RoundParticipantMaterial item
+                    : materialBuilder.listRoundMaterials(session, round)) {
+                if (item.response() != null && item.response().getContent() != null) {
+                    sb.append("\n[").append(item.label()).append(" 回答摘要]\n")
+                            .append(truncate(item.response().getContent(), 2000)).append("\n");
                 }
             }
         }

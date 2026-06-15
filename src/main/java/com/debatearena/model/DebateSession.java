@@ -169,7 +169,15 @@ public class DebateSession {
 
     /** 获取通道展示名称。 */
     public String getChannelAlias(String channelId) {
-        return channelAliases.getOrDefault(channelId, channelId);
+        String alias = channelAliases.get(channelId);
+        if (alias != null && !alias.isBlank()) {
+            return alias;
+        }
+        String custom = customChannelAliases.get(channelId);
+        if (custom != null && !custom.isBlank()) {
+            return custom.trim();
+        }
+        return channelId;
     }
 
     /** 获取用户选择的通道列表；未指定时回退到平台列表映射。 */
@@ -320,6 +328,15 @@ public class DebateSession {
     }
 
     /**
+     * 获取单方失败的摘要列表（供前端警告展示，含通道与平台）。
+     */
+    public List<String> getParticipantFailureSummaries() {
+        List<String> summaries = new ArrayList<>(platformFailures.values());
+        summaries.addAll(channelFailures.values());
+        return summaries;
+    }
+
+    /**
      * 获取单方失败的摘要列表（供前端警告展示）。
      */
     public List<String> getPlatformFailureSummaries() {
@@ -337,11 +354,22 @@ public class DebateSession {
      * 构建整场终止时的可读原因（活跃平台不足等）。
      */
     public String buildTerminalFailureDetail() {
-        if (!platformFailures.isEmpty()) {
-            return String.join("；", platformFailures.values())
-                    + "（活跃平台不足，至少需要 2 个）";
+        if (!platformFailures.isEmpty() || !channelFailures.isEmpty()) {
+            List<String> parts = new ArrayList<>(platformFailures.values());
+            parts.addAll(channelFailures.values());
+            int active = usesChannelParticipants() ? getActiveChannelCount() : getActivePlatformCount();
+            return String.join("；", parts) + "（活跃参与方不足，至少需要 2 个，当前 " + active + " 个）";
         }
-        return "活跃平台不足（当前 " + getActivePlatformCount() + "，至少需要 2 个）";
+        int active = usesChannelParticipants() ? getActiveChannelCount() : getActivePlatformCount();
+        return "活跃参与方不足（当前 " + active + "，至少需要 2 个）";
+    }
+
+    /**
+     * 本场是否以通道（含自定义 API）作为参与方。
+     */
+    private boolean usesChannelParticipants() {
+        return (selectedChannelIds != null && !selectedChannelIds.isEmpty())
+                || (participatingChannelIds != null && !participatingChannelIds.isEmpty());
     }
 
     /**
@@ -408,6 +436,22 @@ public class DebateSession {
     public void setStatus(DebateStatus status) {
         this.status = status;
         this.updatedAt = LocalDateTime.now();
+    }
+
+    /**
+     * 解析参与方展示名称列表（通道优先，回退内置平台）。
+     */
+    public List<String> resolveParticipantLabels() {
+        List<String> channelIds = !getParticipatingChannelIds().isEmpty()
+                ? getParticipatingChannelIds()
+                : (getSelectedChannelIds() != null ? getSelectedChannelIds() : List.<String>of());
+        if (!channelIds.isEmpty()) {
+            return channelIds.stream().map(this::getChannelAlias).toList();
+        }
+        if (!getParticipatingPlatforms().isEmpty()) {
+            return getParticipatingPlatforms().stream().map(this::getParticipantAlias).toList();
+        }
+        return List.of();
     }
 
     public int getCurrentRoundNumber() {

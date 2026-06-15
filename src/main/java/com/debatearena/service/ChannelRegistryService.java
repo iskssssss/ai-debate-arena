@@ -240,17 +240,31 @@ public class ChannelRegistryService {
     }
 
     /**
-     * 判断通道是否可参与研讨。
+     * 判断通道是否可参与研讨（轻量检测，供通道列表/UI 展示，不启动浏览器）。
      */
     public boolean isChannelReady(ChannelDefinition def) {
         if (!def.isEnabled()) {
             return false;
         }
         if (def.getType() == ChannelType.API) {
-            return def.getApiKey() != null && !def.getApiKey().isBlank()
-                    && def.getBaseUrl() != null && !def.getBaseUrl().isBlank()
-                    && def.getModel() != null && !def.getModel().isBlank()
-                    && def.isApiVerified();
+            return isApiChannelConfigured(def) && def.isApiVerified();
+        }
+        AiPlatform platform = toAiPlatform(def).orElse(null);
+        if (platform == null) {
+            return false;
+        }
+        return isBrowserChannelReadyLightweight(platform);
+    }
+
+    /**
+     * 研讨启动前严格校验通道（浏览器通道会启动无头会话做 DOM 登录验证）。
+     */
+    public boolean verifyChannelReadyForDebate(ChannelDefinition def) {
+        if (!def.isEnabled()) {
+            return false;
+        }
+        if (def.getType() == ChannelType.API) {
+            return isApiChannelConfigured(def) && def.isApiVerified();
         }
         AiPlatform platform = toAiPlatform(def).orElse(null);
         if (platform == null) {
@@ -258,6 +272,26 @@ public class ChannelRegistryService {
         }
         SelectorProvider selectors = loadSelectors(platform);
         return profileManager.isEligibleForDebate(platform, selectors);
+    }
+
+    /**
+     * 浏览器通道轻量就绪判断：Profile 存在且登录状态非「未登录」。
+     */
+    private boolean isBrowserChannelReadyLightweight(AiPlatform platform) {
+        if (!profileManager.isProfileReady(platform)) {
+            return false;
+        }
+        LoginStatus status = profileManager.getEffectiveLoginStatus(platform);
+        return status == LoginStatus.LOGGED_IN;
+    }
+
+    /**
+     * API 通道必填项是否已填写。
+     */
+    private boolean isApiChannelConfigured(ChannelDefinition def) {
+        return def.getApiKey() != null && !def.getApiKey().isBlank()
+                && def.getBaseUrl() != null && !def.getBaseUrl().isBlank()
+                && def.getModel() != null && !def.getModel().isBlank();
     }
 
     /**

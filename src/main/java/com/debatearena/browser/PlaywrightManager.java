@@ -84,10 +84,18 @@ public class PlaywrightManager {
      * 为交互式手动登录启动可见浏览器（调用方负责关闭返回的 Context）。
      */
     public synchronized BrowserContext launchPersistentContextForSetup(AiPlatform platform, Path userDataDir) {
-        log.info("🖥️ 为 {} 启动交互式/检测用浏览器...", platform.name());
+        log.info("🖥️ 为 {} 启动交互式登录浏览器...", platform.name());
         BrowserContext context = launchPersistentContextInternal(platform, userDataDir, false);
-        log.info("✅ {} 检测/登录浏览器已打开 — profileDir={}", platform.name(), userDataDir);
+        log.info("✅ {} 交互式登录浏览器已打开 — profileDir={}", platform.name(), userDataDir);
         return context;
+    }
+
+    /**
+     * 启动用于后台登录检测的浏览器（遵循 headless 配置，非用户可见）。
+     */
+    public synchronized BrowserContext launchPersistentContextForVerification(AiPlatform platform, Path userDataDir) {
+        log.debug("🔍 为 {} 启动登录检测浏览器 — headless={}", platform.name(), config.isHeadless());
+        return launchPersistentContextInternal(platform, userDataDir, config.isHeadless());
     }
 
     /**

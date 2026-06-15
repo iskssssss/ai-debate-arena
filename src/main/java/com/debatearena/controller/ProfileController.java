@@ -142,7 +142,7 @@ public class ProfileController {
         if (profileManager.isProfileReady(aiPlatform)) {
             log.info("🔍 {} Profile 已就绪，启动临时浏览器检测登录状态…", aiPlatform.name());
             try {
-                var tempContext = playwrightManager.launchPersistentContextForSetup(
+                var tempContext = playwrightManager.launchPersistentContextForVerification(
                         aiPlatform, profileManager.getProfilePath(aiPlatform));
                 try {
                     LoginStatus loginStatus = profileManager.checkLoginStatus(
@@ -157,7 +157,7 @@ public class ProfileController {
                 if (browserProcessCleaner.isProfileInUseError(e)) {
                     browserProcessCleaner.cleanupOrphanedBrowsers("health-retry-" + aiPlatform.name());
                     try {
-                        var tempContext = playwrightManager.launchPersistentContextForSetup(
+                        var tempContext = playwrightManager.launchPersistentContextForVerification(
                                 aiPlatform, profileManager.getProfilePath(aiPlatform));
                         try {
                             LoginStatus loginStatus = profileManager.checkLoginStatus(

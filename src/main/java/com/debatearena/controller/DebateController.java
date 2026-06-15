@@ -154,9 +154,11 @@ public class DebateController {
      * 组装研讨状态与进度步骤。
      */
     private DebateStatusResponse buildStatusResponse(DebateSession session) {
-        List<String> participants = !session.getParticipatingChannelIds().isEmpty()
-                ? session.getParticipatingChannelIds().stream().map(session::getChannelAlias).toList()
-                : session.getParticipatingPlatforms().stream().map(session::getParticipantAlias).toList();
+        List<String> participants = session.resolveParticipantLabels();
+        int activeCount = !session.getParticipatingChannelIds().isEmpty()
+                || (session.getSelectedChannelIds() != null && !session.getSelectedChannelIds().isEmpty())
+                ? session.getActiveChannelCount()
+                : session.getActivePlatformCount();
         return DebateStatusResponse.builder()
                 .sessionId(session.getSessionId())
                 .topic(session.getTopic())
@@ -166,12 +168,12 @@ public class DebateController {
                 .currentRound(session.getCurrentRoundNumber())
                 .maxRounds(session.getMaxRounds())
                 .convergenceThreshold(session.getConvergenceThreshold())
-                .activePlatforms(session.getActivePlatformCount())
+                .activePlatforms(activeCount)
                 .participants(participants)
                 .judgeEnabled(session.isJudgeEnabled())
                 .postProcessing(progressBuilder.isPostProcessing(session))
                 .failureReason(session.getFailureReason())
-                .platformFailures(session.getPlatformFailureSummaries())
+                .platformFailures(session.getParticipantFailureSummaries())
                 .steps(progressBuilder.buildSteps(session))
                 .createdAt(session.getCreatedAt())
                 .updatedAt(session.getUpdatedAt())
@@ -182,9 +184,7 @@ public class DebateController {
      * 组装研讨历史列表项。
      */
     private DebateHistoryItemResponse buildHistoryItem(DebateSession session) {
-        List<String> participants = !session.getParticipatingChannelIds().isEmpty()
-                ? session.getParticipatingChannelIds().stream().map(session::getChannelAlias).toList()
-                : session.getParticipatingPlatforms().stream().map(session::getParticipantAlias).toList();
+        List<String> participants = session.resolveParticipantLabels();
         return DebateHistoryItemResponse.builder()
                 .sessionId(session.getSessionId())
                 .topic(session.getTopic())
@@ -302,6 +302,57 @@ public class DebateController {
             return ResponseEntity.ok("文档生成失败：" + record.getErrorMessage());
         }
         return ResponseEntity.ok(record.getContent());
+    }
+
+    /**
+     * 重新生成本场研讨的全部产出文档（研讨已结束后可用，用于修复或更新文档内容）。
+     *
+     * <pre>
+     * POST /api/debates/{sessionId}/documents/regenerate
+     * Body: { "judgeApiKey": "sk-..." }  // 可选，未填则使用全局 API Key
+     * </pre>
+     */
+    @PostMapping("/{sessionId}/documents/regenerate")
+    public ResponseEntity<List<OutputDocumentItemResponse>> regenerateDocuments(
+            @PathVariable String sessionId,
+            @RequestBody(required = false) Map<String, String> body) {
+        DebateSession session = loadSession(sessionId);
+        if (session.getStatus() != DebateStatus.CONVERGED
+                && session.getStatus() != DebateStatus.MAX_ROUNDS) {
+            throw new IllegalArgumentException("研讨尚未结束，无法重新生成产出文档");
+        }
+        String apiKey = apiSettingsService.resolveApiKey(body != null ? body.get("judgeApiKey") : null);
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalArgumentException("重新生成文档须填写整理服务 API Key，或在「通道配置」中保存全局 API Key");
+        }
+        judgeService.registerApiKey(sessionId, apiKey);
+        outputDocumentService.generateRequestedDocuments(session, judgeService);
+        stateStore.saveSnapshot(sessionId, session.getCurrentRoundNumber(), session);
+        return listDocuments(sessionId);
+    }
+
+    /**
+     * 重新生成最终整理报告（研讨已结束后可用）。
+     *
+     * <pre>
+     * POST /api/debates/{sessionId}/judge/final/retry
+     * Body: { "judgeApiKey": "sk-..." }
+     * </pre>
+     */
+    @PostMapping("/{sessionId}/judge/final/retry")
+    public ResponseEntity<JudgeRoundRecord> retryFinalJudge(
+            @PathVariable String sessionId,
+            @RequestBody(required = false) Map<String, String> body) {
+        DebateSession session = loadSession(sessionId);
+        String apiKey = apiSettingsService.resolveApiKey(body != null ? body.get("judgeApiKey") : null);
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalArgumentException("重试最终整理须填写整理服务 API Key，或在「通道配置」中保存全局 API Key");
+        }
+        judgeService.registerApiKey(sessionId, apiKey);
+        JudgeRoundRecord record = judgeService.summarizeFinal(session);
+        session.setFinalJudgeRecord(record);
+        stateStore.saveSnapshot(sessionId, session.getCurrentRoundNumber(), session);
+        return ResponseEntity.ok(record);
     }
 
     /**

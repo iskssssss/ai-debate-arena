@@ -37,6 +37,9 @@ public class ProfileManager {
     /** 各平台最近一次检测到的登录状态（健康检查 / 交互登录后更新）。 */
     private final ConcurrentMap<AiPlatform, LoginStatus> loginStatusCache = new ConcurrentHashMap<>();
 
+    /** 各平台登录验证互斥锁，避免并发请求重复拉起浏览器。 */
+    private final ConcurrentMap<AiPlatform, Object> verifyLocks = new ConcurrentHashMap<>();
+
     /**
      * 获取指定平台的 Profile 路径。
      */
@@ -266,29 +269,40 @@ public class ProfileManager {
     }
 
     /**
-     * 通过临时浏览器会话执行 DOM 登录验证（辩论前预检）。
+     * 通过临时浏览器会话执行 DOM 登录验证（研讨启动前预检，无头模式）。
      */
     private boolean verifyLoginWithBrowser(AiPlatform platform, SelectorProvider selectors) {
-        BrowserContext context = null;
-        try {
-            context = playwrightManager.launchPersistentContextForSetup(
-                    platform, getProfilePath(platform));
-            LoginStatus status = checkLoginStatus(context, platform, selectors);
-            if (status != LoginStatus.LOGGED_IN) {
-                log.warn("⛔ {} 不具备辩论资格 — 登录验证未通过: {}", platform.name(), status);
+        Object lock = verifyLocks.computeIfAbsent(platform, p -> new Object());
+        synchronized (lock) {
+            LoginStatus cached = loginStatusCache.get(platform);
+            if (cached == LoginStatus.LOGGED_IN) {
+                return true;
+            }
+            if (cached == LoginStatus.LOGIN_REQUIRED) {
                 return false;
             }
-            log.info("✅ {} 已通过辩论前登录验证", platform.name());
-            return true;
-        } catch (Exception e) {
-            log.warn("⛔ {} 辩论前登录验证异常: {}", platform.name(), e.getMessage());
-            updateLoginStatus(platform, LoginStatus.ERROR);
-            return false;
-        } finally {
-            if (context != null) {
-                try {
-                    context.close();
-                } catch (Exception ignored) {
+
+            BrowserContext context = null;
+            try {
+                context = playwrightManager.launchPersistentContextForVerification(
+                        platform, getProfilePath(platform));
+                LoginStatus status = checkLoginStatus(context, platform, selectors);
+                if (status != LoginStatus.LOGGED_IN) {
+                    log.warn("⛔ {} 不具备辩论资格 — 登录验证未通过: {}", platform.name(), status);
+                    return false;
+                }
+                log.info("✅ {} 已通过辩论前登录验证", platform.name());
+                return true;
+            } catch (Exception e) {
+                log.warn("⛔ {} 辩论前登录验证异常: {}", platform.name(), e.getMessage());
+                updateLoginStatus(platform, LoginStatus.ERROR);
+                return false;
+            } finally {
+                if (context != null) {
+                    try {
+                        context.close();
+                    } catch (Exception ignored) {
+                    }
                 }
             }
         }

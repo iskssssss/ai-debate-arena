@@ -126,6 +126,39 @@ public class DebateProgressBuilder {
             state = "error";
         }
 
+        List<ProgressStepDto> children = buildPrepChildren(session);
+        List<String> channelIds = resolveParticipantChannelIds(session);
+        boolean allApi = !channelIds.isEmpty() && channelIds.stream().allMatch(this::isApiOnlyChannelId);
+
+        return ProgressStepDto.builder()
+                .id("prep")
+                .label("准备研讨环境")
+                .detail(allApi ? "校验通道配置与 API 连通性" : "校验通道登录并启动浏览器")
+                .state(state)
+                .children(children)
+                .build();
+    }
+
+    /**
+     * 构建准备阶段的各参与方子步骤（优先通道 ID，回退内置平台）。
+     */
+    private List<ProgressStepDto> buildPrepChildren(DebateSession session) {
+        List<String> channelIds = resolveParticipantChannelIds(session);
+        if (!channelIds.isEmpty()) {
+            List<ProgressStepDto> children = new ArrayList<>();
+            for (String channelId : channelIds) {
+                String alias = session.getChannelAlias(channelId);
+                boolean active = session.isChannelActive(channelId);
+                children.add(ProgressStepDto.builder()
+                        .id("prep-" + channelId)
+                        .label(alias)
+                        .detail(active ? "已接入" : "未参与")
+                        .state(active ? "done" : "error")
+                        .build());
+            }
+            return children;
+        }
+
         List<ProgressStepDto> children = new ArrayList<>();
         for (AiPlatform platform : session.getSelectedPlatformsOrAll()) {
             if (!session.getParticipatingPlatforms().isEmpty()
@@ -146,14 +179,7 @@ public class DebateProgressBuilder {
                     .state(childState)
                     .build());
         }
-
-        return ProgressStepDto.builder()
-                .id("prep")
-                .label("准备研讨环境")
-                .detail("校验通道登录并启动浏览器")
-                .state(state)
-                .children(children)
-                .build();
+        return children;
     }
 
     private List<ProgressStepDto> buildRoundSteps(DebateSession session) {
@@ -176,6 +202,60 @@ public class DebateProgressBuilder {
 
     private List<ProgressStepDto> buildParticipantSteps(DebateSession session, int roundNum,
                                                        DebateRound round, String roundState) {
+        List<String> channelIds = resolveParticipantChannelIds(session);
+        if (!channelIds.isEmpty()) {
+            return buildChannelParticipantSteps(session, roundNum, round, roundState, channelIds);
+        }
+        return buildPlatformParticipantSteps(session, roundNum, round, roundState);
+    }
+
+    /**
+     * 构建各 API/自定义通道在某轮的子进度。
+     */
+    private List<ProgressStepDto> buildChannelParticipantSteps(DebateSession session, int roundNum,
+                                                                 DebateRound round, String roundState,
+                                                                 List<String> channelIds) {
+        List<ProgressStepDto> children = new ArrayList<>();
+        for (String channelId : channelIds) {
+            String alias = session.getChannelAlias(channelId);
+            String childState = "pending";
+            String detail = "等待中";
+
+            if (!session.isChannelActive(channelId)) {
+                childState = "error";
+                detail = session.getChannelFailures().getOrDefault(channelId, "已退出");
+            } else if (round != null) {
+                ParticipantResponse resp = round.getChannelResponse(channelId);
+                if (resp != null && resp.getContent() != null && !resp.getContent().isBlank()) {
+                    childState = "done";
+                    detail = "已提交（" + resp.getContent().length() + " 字）";
+                } else if (round.getChannelPrompt(channelId) != null) {
+                    childState = "error";
+                    detail = "未收到回复";
+                }
+            } else if ("error".equals(roundState)) {
+                childState = session.isChannelActive(channelId) ? "done" : "error";
+                detail = session.isChannelActive(channelId) ? "已提交" : "提交失败";
+            } else if ("active".equals(roundState)) {
+                childState = "active";
+                detail = "撰写中…";
+            }
+
+            children.add(ProgressStepDto.builder()
+                    .id("round-" + roundNum + "-" + channelId)
+                    .label(alias)
+                    .detail(detail)
+                    .state(childState)
+                    .build());
+        }
+        return children;
+    }
+
+    /**
+     * 构建各内置平台在某轮的子进度。
+     */
+    private List<ProgressStepDto> buildPlatformParticipantSteps(DebateSession session, int roundNum,
+                                                                DebateRound round, String roundState) {
         List<ProgressStepDto> children = new ArrayList<>();
         for (AiPlatform platform : session.getParticipatingPlatforms()) {
             if (platform == null) continue;
@@ -211,6 +291,26 @@ public class DebateProgressBuilder {
                     .build());
         }
         return children;
+    }
+
+    /**
+     * 解析本场参与通道 ID（优先实际参与列表，回退用户勾选）。
+     */
+    private List<String> resolveParticipantChannelIds(DebateSession session) {
+        if (session.getParticipatingChannelIds() != null && !session.getParticipatingChannelIds().isEmpty()) {
+            return session.getParticipatingChannelIds();
+        }
+        if (session.getSelectedChannelIds() != null && !session.getSelectedChannelIds().isEmpty()) {
+            return session.getSelectedChannelIds();
+        }
+        return List.of();
+    }
+
+    /**
+     * 判断通道 ID 是否为自定义 API 通道（非内置浏览器槽位）。
+     */
+    private boolean isApiOnlyChannelId(String channelId) {
+        return channelId != null && channelId.startsWith("api-");
     }
 
     private ProgressStepDto buildConvergenceStep(DebateSession session) {

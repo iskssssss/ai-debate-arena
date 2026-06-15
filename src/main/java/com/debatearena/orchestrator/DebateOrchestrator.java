@@ -124,7 +124,6 @@ public class DebateOrchestrator {
         }
         activeJudge.registerSession(sessionId, session);
         sessionCache.put(sessionId, session);
-        stateStore.saveSnapshot(sessionId, 0, session);
 
         log.info("🚀 辩论开始 — session={}, topic={}, maxRounds={}",
                 sessionId, session.getTopic(), session.getMaxRounds());
@@ -133,10 +132,11 @@ public class DebateOrchestrator {
             // --- 排除未登录 / 未就绪平台 ---
             excludeUnreadyChannels(session);
             promptBuilder.assignParticipantAliases(session);
-            log.info("讨论方代号: {}", session.getParticipantAliases());
+            log.info("讨论方代号: {}", session.getChannelAliases());
 
             // --- 初始化浏览器和适配器 ---
             initializeAdapters(session);
+            stateStore.saveSnapshot(sessionId, 0, session);
 
             // --- 第 1 轮：初始回答 ---
             session.setStatus(DebateStatus.INITIAL_ANSWER);
@@ -204,6 +204,10 @@ public class DebateOrchestrator {
             log.error("💥 辩论异常 — session={}: {}", sessionId, e.getMessage(), e);
             session.setStatus(DebateStatus.FAILED);
             session.markTerminalFailure(e.getMessage() != null ? e.getMessage() : "未知异常");
+            if (session.getFailedAtRound() == 0 && session.getCurrentRoundNumber() > 0) {
+                session.setFailedAtRound(session.getCurrentRoundNumber());
+            }
+            stateStore.saveSnapshot(sessionId, session.getCurrentRoundNumber(), session);
         } finally {
             cleanupAdapters();
             // 已收敛/达上限的会话由异步赛后任务清理
@@ -297,7 +301,9 @@ public class DebateOrchestrator {
      * 执行单轮辩论——向所有活跃平台发送 Prompt。
      */
     DebateRound executeRound(DebateSession session, int roundNum, RoundType type) {
-        log.debug("▶️ 开始第 {} 轮 [{}] — 活跃通道: {}", roundNum, type, session.getActiveChannelCount());
+        int roundTimeoutSeconds = resolveRoundTimeoutSeconds(session);
+        log.debug("▶️ 开始第 {} 轮 [{}] — 活跃通道: {}, 超时: {}s",
+                roundNum, type, session.getActiveChannelCount(), roundTimeoutSeconds);
         DebateRound round = DebateRound.builder()
                 .roundNumber(roundNum)
                 .roundType(type)
@@ -319,7 +325,7 @@ public class DebateOrchestrator {
             futures.put(channelId, future);
             if (!debateConfig.isParallelExecution()) {
                 try {
-                    future.get(debateConfig.getAiTimeoutSeconds(), TimeUnit.SECONDS);
+                    future.get(roundTimeoutSeconds, TimeUnit.SECONDS);
                 } catch (Exception e) {
                     log.error("{} 串行发送失败: {}", channelId, extractFailureMessage(e));
                 }
@@ -329,10 +335,10 @@ public class DebateOrchestrator {
         CompletableFuture<Void> allFutures = CompletableFuture.allOf(
                 futures.values().toArray(new CompletableFuture[0]));
         try {
-            allFutures.get(debateConfig.getAiTimeoutSeconds(), TimeUnit.SECONDS);
+            allFutures.get(roundTimeoutSeconds, TimeUnit.SECONDS);
         } catch (TimeoutException e) {
-            log.error("⏰ 第 {} 轮超时，等待在途任务收尾…", roundNum);
-            awaitChannelFuturesGracefully(futures, 60);
+            log.error("⏰ 第 {} 轮超时（{}s），等待在途任务收尾…", roundNum, roundTimeoutSeconds);
+            awaitChannelFuturesGracefully(futures, debateConfig.getAiTimeoutSeconds());
         } catch (Exception e) {
             log.error("第 {} 轮并行执行异常: {}", roundNum, e.getMessage());
         }
@@ -688,7 +694,7 @@ public class DebateOrchestrator {
                     excluded.add(def.getDisplayName() + "(未启用)");
                     continue;
                 }
-                if (channelRegistryService.isChannelReady(def)) {
+                if (channelRegistryService.verifyChannelReadyForDebate(def)) {
                     eligible++;
                 } else {
                     excluded.add(def.getDisplayName() + (def.getType() == ChannelType.API ? "(API 未配置)" : "(未登录)"));
@@ -727,7 +733,7 @@ public class DebateOrchestrator {
         for (String channelId : session.getSelectedChannelIdsOrDefault()) {
             try {
                 ChannelDefinition def = channelRegistryService.getChannel(channelId);
-                if (!channelRegistryService.isChannelReady(def)) {
+                if (!channelRegistryService.verifyChannelReadyForDebate(def)) {
                     session.markChannelFailed(channelId);
                     log.warn("⛔ {} 已排除 — 未就绪", def.getDisplayName());
                 }
@@ -796,6 +802,37 @@ public class DebateOrchestrator {
             String detail = session.buildTerminalFailureDetail();
             session.markTerminalFailure(detail);
             throw new DebateFailedException(detail);
+        }
+    }
+
+    /**
+     * 计算单轮等待超时：API 通道经信号量串行调用，按活跃 API 通道数放大上限。
+     */
+    private int resolveRoundTimeoutSeconds(DebateSession session) {
+        int base = debateConfig.getAiTimeoutSeconds();
+        List<String> activeChannelIds = session.getActiveChannelIds();
+        if (activeChannelIds.isEmpty()) {
+            return base;
+        }
+        long apiChannelCount = activeChannelIds.stream()
+                .filter(this::isApiChannel)
+                .count();
+        if (apiChannelCount <= 1) {
+            return base;
+        }
+        int scaled = (int) (base * apiChannelCount);
+        log.debug("API 通道串行等待 — {} 个通道，轮次超时 {}s", apiChannelCount, scaled);
+        return scaled;
+    }
+
+    /**
+     * 判断通道是否为 API 类型。
+     */
+    private boolean isApiChannel(String channelId) {
+        try {
+            return channelRegistryService.getChannel(channelId).getType() == ChannelType.API;
+        } catch (IllegalArgumentException e) {
+            return false;
         }
     }
 

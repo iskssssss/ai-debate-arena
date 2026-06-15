@@ -2,6 +2,7 @@ package com.debatearena.reporting;
 
 import com.debatearena.model.*;
 import com.debatearena.prompts.PromptTemplateService;
+import com.debatearena.service.DebateMaterialBuilder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -23,6 +24,7 @@ public class SynthesisGenerator {
     private static final int ROUND_EXCERPT_LEN = 800;
 
     private final PromptTemplateService promptService;
+    private final DebateMaterialBuilder materialBuilder;
 
     /**
      * 根据完整的 DebateSession 生成 Markdown 实现方案报告。
@@ -60,9 +62,7 @@ public class SynthesisGenerator {
      * 拼接参与讨论方代号列表。
      */
     private String buildParticipantsString(DebateSession session) {
-        List<String> aliases = session.getActivePlatforms().stream()
-                .map(session::getParticipantAlias)
-                .toList();
+        List<String> aliases = session.resolveParticipantLabels();
         return aliases.isEmpty() ? "（无）" : String.join("、", aliases);
     }
 
@@ -70,7 +70,7 @@ public class SynthesisGenerator {
      * 生成研讨概述摘要。
      */
     private String buildSummary(DebateSession session) {
-        int count = session.getActivePlatforms().size();
+        int count = materialBuilder.countParticipants(session);
         StringBuilder sb = new StringBuilder();
         sb.append(count).append(" 位讨论方针对需求「").append(session.getTopic()).append("」");
         sb.append("进行了 ").append(session.getCurrentRoundNumber()).append(" 轮实现方案研讨。");
@@ -98,11 +98,13 @@ public class SynthesisGenerator {
         DebateRound round1 = session.getRounds().get(0);
         StringBuilder sb = new StringBuilder();
 
-        for (AiPlatform platform : session.getActivePlatforms()) {
-            ParticipantResponse resp = round1.getResponse(platform);
-            if (resp == null || resp.getContent() == null) continue;
-            sb.append("### ").append(session.getParticipantAlias(platform)).append(" 初始方案摘要\n\n");
-            sb.append(excerpt(resp.getContent(), EXCERPT_LEN)).append("\n\n---\n\n");
+        for (DebateMaterialBuilder.RoundParticipantMaterial item
+                : materialBuilder.listRoundMaterials(session, round1)) {
+            if (item.response() == null || item.response().getContent() == null) {
+                continue;
+            }
+            sb.append("### ").append(item.label()).append(" 初始方案摘要\n\n");
+            sb.append(excerpt(item.response().getContent(), EXCERPT_LEN)).append("\n\n---\n\n");
         }
         return sb.isEmpty() ? "无初始方案记录。" : sb.toString();
     }
@@ -117,11 +119,13 @@ public class SynthesisGenerator {
             sb.append("### 第 ").append(round.getRoundNumber()).append(" 轮：")
                     .append(formatRoundType(round.getRoundType())).append("\n\n");
 
-            for (AiPlatform platform : session.getActivePlatforms()) {
-                ParticipantResponse resp = round.getResponse(platform);
-                if (resp == null || resp.getContent() == null) continue;
-                sb.append("#### ").append(session.getParticipantAlias(platform)).append("\n\n");
-                sb.append(excerpt(resp.getContent(), ROUND_EXCERPT_LEN)).append("\n\n");
+            for (DebateMaterialBuilder.RoundParticipantMaterial item
+                    : materialBuilder.listRoundMaterials(session, round)) {
+                if (item.response() == null || item.response().getContent() == null) {
+                    continue;
+                }
+                sb.append("#### ").append(item.label()).append("\n\n");
+                sb.append(excerpt(item.response().getContent(), ROUND_EXCERPT_LEN)).append("\n\n");
             }
 
             if (round.getJudgeRecord() != null && round.getJudgeRecord().isSuccess()) {
@@ -276,12 +280,14 @@ public class SynthesisGenerator {
         if (convergenceRound == null) return fallback;
 
         StringBuilder sb = new StringBuilder();
-        for (AiPlatform platform : session.getActivePlatforms()) {
-            ParticipantResponse resp = convergenceRound.getResponse(platform);
-            if (resp == null || resp.getContent() == null) continue;
-            String section = extractSection(resp.getContent(), keyword);
+        for (DebateMaterialBuilder.RoundParticipantMaterial item
+                : materialBuilder.listRoundMaterials(session, convergenceRound)) {
+            if (item.response() == null || item.response().getContent() == null) {
+                continue;
+            }
+            String section = extractSection(item.response().getContent(), keyword);
             if (!section.isBlank()) {
-                sb.append("**").append(session.getParticipantAlias(platform)).append("：**\n");
+                sb.append("**").append(item.label()).append("：**\n");
                 sb.append(section).append("\n\n");
             }
         }
@@ -298,11 +304,13 @@ public class SynthesisGenerator {
             return;
         }
         sb.append("### ").append(keyword).append("\n\n");
-        for (AiPlatform platform : session.getActivePlatforms()) {
-            ParticipantResponse resp = convergenceRound.getResponse(platform);
-            if (resp == null || resp.getContent() == null) continue;
-            sb.append("#### ").append(session.getParticipantAlias(platform)).append("\n\n");
-            sb.append(excerpt(resp.getContent(), ROUND_EXCERPT_LEN)).append("\n\n");
+        for (DebateMaterialBuilder.RoundParticipantMaterial item
+                : materialBuilder.listRoundMaterials(session, convergenceRound)) {
+            if (item.response() == null || item.response().getContent() == null) {
+                continue;
+            }
+            sb.append("#### ").append(item.label()).append("\n\n");
+            sb.append(excerpt(item.response().getContent(), ROUND_EXCERPT_LEN)).append("\n\n");
         }
     }
 
@@ -310,10 +318,12 @@ public class SynthesisGenerator {
      * 无收敛轮时，使用各讨论方最新回答作为兜底。
      */
     private void appendLatestResponses(DebateSession session, StringBuilder sb) {
-        for (AiPlatform platform : session.getActivePlatforms()) {
-            String text = session.getLatestResponseText(platform);
-            if (text == null || text.isBlank()) continue;
-            sb.append("#### ").append(session.getParticipantAlias(platform)).append(" 最新方案\n\n");
+        for (String label : session.resolveParticipantLabels()) {
+            String text = materialBuilder.getLatestResponseText(session, label);
+            if (text == null || text.isBlank()) {
+                continue;
+            }
+            sb.append("#### ").append(label).append(" 最新方案\n\n");
             sb.append(excerpt(text, ROUND_EXCERPT_LEN)).append("\n\n");
         }
     }
